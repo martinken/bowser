@@ -1,0 +1,11 @@
+[project]
+name = "bowser"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pyside6>=6.10.1",
+    "pillow>=10.0.0",
+    "tinytag>=2.2.0",
+]
