@@ -1,6 +1,6 @@
 import os
 
-from PySide6.QtCore import QDir, Qt
+from PySide6.QtCore import Qt
 from PySide6.QtGui import (
     QAction,
     QColor,
@@ -10,17 +10,17 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
-    QFileSystemModel,
     QHBoxLayout,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QSplitter,
     QStyleFactory,
-    QTreeView,
     QVBoxLayout,
     QWidget,
 )
 
+from directorytree import DirectoryTree
 from imagegallery import ImageGallery
 from imageviewer import ImageViewer
 from metadataviewer import MetadataViewer
@@ -31,6 +31,9 @@ class BowserMain(QMainWindow):
     def __init__(self, parent=None, folder_path=None):
         super().__init__(parent)
 
+        # start with no marked files
+        self._marked_files = []
+
         # Apply dark mode (Fusion style with dark palette)
         self._apply_dark_mode()
 
@@ -39,30 +42,7 @@ class BowserMain(QMainWindow):
 
         # Create the three main widgets
         # 1. Directory tree
-        self._directory_tree = QTreeView()
-        self._directory_tree.setHeaderHidden(True)
-        self._directory_tree.setMinimumWidth(100)
-
-        # Create file system model for the directory tree
-        self._file_system_model = QFileSystemModel()
-        self._file_system_model.setRootPath("")
-        self._file_system_model.setFilter(
-            QDir.Filter.AllDirs | QDir.Filter.NoDotAndDotDot
-        )
-        self._directory_tree.setModel(self._file_system_model)
-
-        # Hide all columns except the name column
-        self._directory_tree.setColumnHidden(1, True)  # Hide size column
-        self._directory_tree.setColumnHidden(2, True)  # Hide type column
-        self._directory_tree.setColumnHidden(3, True)  # Hide date
-
-        # Hide the header
-        self._directory_tree.header().hide()
-
-        # Set column width for the name column
-        self._directory_tree.setColumnWidth(0, 80)
-
-        # Connect the item clicked signal to handle folder selection
+        self._directory_tree = DirectoryTree()
         self._directory_tree.clicked.connect(self._on_folder_clicked)
 
         # 2. Image gallery
@@ -76,18 +56,24 @@ class BowserMain(QMainWindow):
         self._viewer = QWidget()
         self._viewer_layout = QVBoxLayout(self._viewer)
         self._viewer.setLayout(self._viewer_layout)
-        
+
         # Create navigation buttons
         self._navigation_buttons_layout = QHBoxLayout()
         self._previous_button = QPushButton("Previous")
+        self._one_to_one_button = QPushButton("1:1")
+        self._fit_button = QPushButton("Fit")
+        self._mark_file_button = QPushButton("Mark File")
         self._next_button = QPushButton("Next")
         self._navigation_buttons_layout.addWidget(self._previous_button)
+        self._navigation_buttons_layout.addWidget(self._one_to_one_button)
+        self._navigation_buttons_layout.addWidget(self._fit_button)
+        self._navigation_buttons_layout.addWidget(self._mark_file_button)
         self._navigation_buttons_layout.addWidget(self._next_button)
         self._navigation_buttons_layout.setContentsMargins(0, 0, 0, 0)
-        
+
         # Add navigation buttons to the viewer layout
         self._viewer_layout.addLayout(self._navigation_buttons_layout)
-        
+
         # Add image and video viewers
         self._image_viewer = ImageViewer()
         self._image_viewer.setStyleSheet("border: 1px solid gray;")
@@ -95,9 +81,12 @@ class BowserMain(QMainWindow):
         self._video_viewer = VideoViewer()
         self._video_viewer.setStyleSheet("border: 1px solid gray;")
         self._viewer_layout.addWidget(self._video_viewer)
-        
+
         # Connect button signals
         self._previous_button.clicked.connect(self._on_previous_clicked)
+        self._one_to_one_button.clicked.connect(self._on_one_to_one_clicked)
+        self._fit_button.clicked.connect(self._on_fit_clicked)
+        self._mark_file_button.clicked.connect(self._on_mark_file_clicked)
         self._next_button.clicked.connect(self._on_next_clicked)
 
         # 4. JSON metadata display
@@ -134,7 +123,7 @@ class BowserMain(QMainWindow):
 
         # If a folder path is provided, open it
         if folder_path:
-            self._open_folder_from_path(folder_path)
+            self._open_root_folder_from_path(folder_path)
 
     def _create_menu_bar(self):
         """Create the menu bar with File menu and actions."""
@@ -146,8 +135,23 @@ class BowserMain(QMainWindow):
         # Create Open Folder action
         open_folder_action = QAction("Open Folder", self)
         open_folder_action.setShortcut("Ctrl+O")
-        open_folder_action.triggered.connect(self._open_folder)
+        open_folder_action.triggered.connect(self._open_root_folder)
         file_menu.addAction(open_folder_action)
+
+        # Add separator
+        file_menu.addSeparator()
+
+        # Create Delete Marked Files action
+        delete_marked_action = QAction("Delete Marked Files", self)
+        delete_marked_action.setShortcut("Ctrl+D")
+        delete_marked_action.triggered.connect(self._delete_marked_files)
+        file_menu.addAction(delete_marked_action)
+
+        # Create Prune Empty Directories action
+        prune_action = QAction("Prune Empty Directories", self)
+        prune_action.setShortcut("Ctrl+P")
+        prune_action.triggered.connect(self._prune_empty_directories_action)
+        file_menu.addAction(prune_action)
 
         # Add separator
         file_menu.addSeparator()
@@ -158,7 +162,52 @@ class BowserMain(QMainWindow):
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
 
-    def _open_folder(self):
+    def _navigate_to_next_folder(self):
+        """Navigate to the next folder in the directory tree."""
+        next_index = self._directory_tree.navigate_to_next_folder()
+        if next_index:
+            self._on_folder_clicked(next_index)
+
+    def _prune_empty_directories_action(self):
+        """Handle Prune Empty Directories menu action."""
+        # Get the current root folder from the file system model
+        root_path = self._directory_tree.get_file_system_model().rootPath()
+        
+        if not root_path or not os.path.isdir(root_path):
+            QMessageBox.warning(
+                self,
+                "No Folder Selected",
+                "Please select a folder first.",
+                QMessageBox.StandardButton.Ok
+            )
+            return
+        
+        # Confirm with user
+        confirm = QMessageBox.question(
+            self,
+            "Confirm Prune Empty Directories",
+            f"Are you sure you want to remove all empty directories below:\n{root_path}?\n\n" +
+            "This action cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        
+        if confirm == QMessageBox.StandardButton.Yes:
+            # Prune empty directories
+            removed_count = self._directory_tree.prune_empty_directories(root_path)
+            
+            # Show result message
+            QMessageBox.information(
+                self,
+                "Directories Pruned",
+                f"Successfully removed {removed_count} empty directory(ies).",
+                QMessageBox.StandardButton.Ok
+            )
+            
+            # Refresh the directory tree
+            if root_path:
+                self._directory_tree.open_root_folder(root_path)
+
+    def _open_root_folder(self):
         """Open a file dialog to select a folder."""
         folder_path = QFileDialog.getExistingDirectory(
             self,
@@ -167,9 +216,9 @@ class BowserMain(QMainWindow):
             QFileDialog.Option.ShowDirsOnly | QFileDialog.Option.DontResolveSymlinks,
         )
         if folder_path:
-            self._open_folder_from_path(folder_path)
+            self._open_root_folder_from_path(folder_path)
 
-    def _open_folder_from_path(self, folder_path):
+    def _open_root_folder_from_path(self, folder_path):
         """Open a folder from a given path.
 
         Args:
@@ -177,32 +226,14 @@ class BowserMain(QMainWindow):
         """
         # Check if the path is a valid directory
         if os.path.isdir(folder_path):
-            # Set the root path of the file system model to the selected folder
-            self._file_system_model.setRootPath(folder_path)
-            # Expand the root item
-            self._directory_tree.setRootIndex(
-                self._file_system_model.index(folder_path)
-            )
-            # Expand all directories under the root
-            self._expand_all_directories(self._directory_tree.rootIndex())
-
-    def _expand_all_directories(self, index):
-        """Recursively expand all directories starting from the given index."""
-        # Expand the current index
-        self._directory_tree.setExpanded(index, True)
-
-        # Iterate through all children
-        for row in range(self._file_system_model.rowCount(index)):
-            child_index = self._file_system_model.index(row, 0, index)
-            # If the child is a directory, expand it
-            if self._file_system_model.isDir(child_index):
-                self._expand_all_directories(child_index)
+            # Use the directory tree's method to open the folder
+            self._directory_tree.open_root_folder(folder_path)
 
     def _on_folder_clicked(self, index):
         """Handle folder click event and invoke read_folder callback."""
         if index.isValid():
             # Get the file path from the model
-            file_path = self._file_system_model.filePath(index)
+            file_path = self._directory_tree.get_file_system_model().filePath(index)
             # Invoke the read_folder callback with the folder path
             self.read_folder(file_path)
 
@@ -247,6 +278,89 @@ class BowserMain(QMainWindow):
         """Handle Next button click event."""
         self._image_gallery.nextThumbnail()
 
+    def _on_one_to_one_clicked(self):
+        """Handle 1:1 button click event."""
+        self._image_viewer.fullSize()
+
+    def _on_fit_clicked(self):
+        """Handle Fit button click event."""
+        self._image_viewer.normalSize()
+
+    def _on_mark_file_clicked(self):
+        """Handle Mark File button click event."""
+        # Get the current file path from the image gallery
+        current_file = self._image_gallery.get_current_file_path()
+        if current_file:
+            # is it already marked? if so toggle
+            if current_file in self._marked_files:
+                self._marked_files.remove(current_file)
+                self._image_gallery.mark_current_file(False)
+            else:
+                self._image_gallery.mark_current_file(True)
+                self._marked_files.append(current_file)
+        # advance to the next file
+        self._on_next_clicked()
+
+    def _delete_marked_files(self):
+        """Delete all marked files."""
+        if not self._marked_files:
+            return
+
+        # Confirm deletion with user
+        confirm = QMessageBox.question(
+            self,
+            "Confirm Deletion",
+            f"Are you sure you want to delete {len(self._marked_files)} marked file(s)?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+
+        if confirm == QMessageBox.StandardButton.Yes:
+            # Delete each marked file
+            deleted_count = 0
+            current_folder = (
+                os.path.dirname(self._marked_files[0]) if self._marked_files else ""
+            )
+            for file_path in self._marked_files[:]:  # Use slice to iterate over a copy
+                try:
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                        deleted_count += 1
+
+                        # Remove any matching .swarm.json and .swarmpreview.jpg files
+                        base_name = os.path.splitext(file_path)[0]
+
+                        # Remove .swarm.json file if it exists
+                        swarm_json_path = base_name + ".swarm.json"
+                        if os.path.exists(swarm_json_path):
+                            try:
+                                os.remove(swarm_json_path)
+                                deleted_count += 1
+                            except Exception as e:
+                                print(f"Error deleting {swarm_json_path}: {e}")
+
+                        # Remove .swarmpreview.jpg file if it exists
+                        swarm_preview_path = base_name + ".swarmpreview.jpg"
+                        if os.path.exists(swarm_preview_path):
+                            try:
+                                os.remove(swarm_preview_path)
+                                deleted_count += 1
+                            except Exception as e:
+                                print(f"Error deleting {swarm_preview_path}: {e}")
+
+                        # Remove from marked files list
+                        self._marked_files.remove(file_path)
+                except Exception as e:
+                    print(f"Error deleting {file_path}: {e}")
+
+            # Refresh the current folder in the gallery
+            if deleted_count > 0 and current_folder:
+                self.read_folder(current_folder)
+
+            # Show success message
+            QMessageBox.information(
+                self, "Files Deleted", f"Successfully deleted {deleted_count} file(s)."
+            )
+
     def _display_image(self, image_path):
         """Display a image file in a ImageViewer widget.
 
@@ -282,10 +396,18 @@ class BowserMain(QMainWindow):
         Args:
             event: QKeyEvent
         """
-        if event.key() == Qt.Key.Key_R:
+        if event.key() == Qt.Key.Key_A:
+            self._on_previous_clicked()
+        elif event.key() == Qt.Key.Key_D:
+            self._on_next_clicked()
+        elif event.key() == Qt.Key.Key_R:
             self._image_viewer.normalSize()
         elif event.key() == Qt.Key.Key_1:
             self._image_viewer.fullSize()
+        elif event.key() == Qt.Key.Key_X:
+            self._on_mark_file_clicked()
+        elif event.key() == Qt.Key.Key_S:
+            self._navigate_to_next_folder()
 
     def _apply_dark_mode(self):
         """Apply dark mode using Fusion style with custom dark palette."""

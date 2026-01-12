@@ -2,8 +2,14 @@
 
 import os
 
-from PySide6.QtCore import QMimeData, QSize, Qt, Signal
-from PySide6.QtGui import QPixmap, QDrag
+from PySide6.QtCore import (
+    QMimeData,
+    QSize,
+    Qt,
+    QUrl,
+    Signal,
+)
+from PySide6.QtGui import QDrag, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QGridLayout,
@@ -22,29 +28,69 @@ class DragLabel(QLabel):
         super().__init__(parent)
         self.image_path = image_path
         self.setAcceptDrops(True)
+        self.isVideo = False
+        self.isMarked = False
+        self.isHighlighted = False
+        self.updateBorder()
+
+    def setIsVideo(self, value):
+        self.isVideo = value
+        self.updateBorder()
+
+    def setHighlight(self, value):
+        self.isHighlighted = value
+        self.updateBorder()
+
+    def updateBorder(self):
+        if self.isMarked:
+            # Add a red checkmark overlay or change background
+            self.setStyleSheet(
+                "border: 2px solid #FF0000; background: rgba(255, 0, 0, 30);"
+            )
+            return
+        if self.isHighlighted:
+            if self.isVideo:
+                self.setStyleSheet("border: 2px solid #C0A0FF;")
+            else:
+                self.setStyleSheet("border: 2px solid #C0FFA0;")
+        else:
+            if self.isVideo:
+                self.setStyleSheet("border: 2px solid #603080;")
+            else:
+                self.setStyleSheet("border: 2px solid #608030;")
+
+    def setMarked(self, value):
+        """Mark or unmark the thumbnail.
+
+        Args:
+            value (bool): True to mark the thumbnail, False to unmark it.
+        """
+        self.isMarked = value
+        self.updateBorder()
 
     def mouseMoveEvent(self, event):
         """Handle mouse move events to initiate drag operations."""
         if event.buttons() != Qt.MouseButton.LeftButton:
             return
-        
+
         # Check if the mouse has moved enough to start dragging
-        if (event.pos() - self.drag_start_position).manhattanLength() < QApplication.startDragDistance():
+        if (
+            event.pos() - self.drag_start_position
+        ).manhattanLength() < QApplication.startDragDistance():
             return
-        
+
         # Create drag object
         drag = QDrag(self)
-        
+
         # Create mime data with the file path
         mime_data = QMimeData()
-        mime_data.setText(self.image_path)
-        mime_data.setUrls([self.image_path])
-        
+        url = QUrl.fromLocalFile(self.image_path)
+        mime_data.setUrls([url])
         drag.setMimeData(mime_data)
-        
+
         # Create a transparent pixmap for the drag cursor
         drag.setPixmap(QPixmap())
-        
+
         drag.exec(Qt.DropAction.CopyAction | Qt.DropAction.MoveAction)
 
     def mousePressEvent(self, event):
@@ -220,23 +266,20 @@ class ImageGallery(QWidget):
         video_extensions = [".mp4", ".mov"]
         file_ext = os.path.splitext(image_path)[1].lower()
         if file_ext in video_extensions:
-            thumbnail_label.setStyleSheet("border: 2px solid #1E90FF;")
+            thumbnail_label.setIsVideo(True)
 
         # Make thumbnail clickable
         thumbnail_label.setCursor(Qt.CursorShape.PointingHandCursor)
-        
-        # Store the index for click handling
-        thumbnail_label.thumbnail_index = index
-        
+
         # Override mousePressEvent to handle both click and drag initialization
         def handle_mouse_press(event):
             # Initialize drag start position for drag functionality
             thumbnail_label.drag_start_position = event.pos()
-            
+
             # Handle click functionality
             if event.button() == Qt.MouseButton.LeftButton:
                 self._on_thumbnail_clicked(index)
-        
+
         thumbnail_label.mousePressEvent = handle_mouse_press
 
         return thumbnail_label
@@ -247,7 +290,9 @@ class ImageGallery(QWidget):
         Args:
             image_path (str): Path to the clicked image file.
         """
+        self._thumbnail_widgets[self._last_thumbnail_clicked_index].setHighlight(False)
         self._last_thumbnail_clicked_index = index
+        self._thumbnail_widgets[self._last_thumbnail_clicked_index].setHighlight(True)
         # Emit signal with the image path
         self.thumbnailClicked.emit(self._image_paths[index])
 
@@ -260,8 +305,10 @@ class ImageGallery(QWidget):
         if not self._image_paths:
             return False
 
-        # Move to next thumbnail (wrap around to first if at end)
-        new_index = (self._last_thumbnail_clicked_index + 1) % len(self._image_paths)
+        # Move to next thumbnail, no wrapping
+        new_index = min(
+            self._last_thumbnail_clicked_index + 1, len(self._image_paths) - 1
+        )
 
         # Only emit signal if index changed
         if new_index != self._last_thumbnail_clicked_index:
@@ -279,8 +326,8 @@ class ImageGallery(QWidget):
         if not self._image_paths:
             return False
 
-        # Move to previous thumbnail (wrap around to last if at beginning)
-        new_index = (self._last_thumbnail_clicked_index - 1) % len(self._image_paths)
+        # Move to previous thumbnail, no wrapping
+        new_index = max(self._last_thumbnail_clicked_index - 1, 0)
 
         # Only emit signal if index changed
         if new_index != self._last_thumbnail_clicked_index:
@@ -293,6 +340,7 @@ class ImageGallery(QWidget):
         """Clear all thumbnails from the gallery."""
         # Remove all widgets from the grid layout
         self._thumbnail_widgets = []
+        self._last_thumbnail_clicked_index = 0
         while self._content_layout.count():
             item = self._content_layout.takeAt(0)
             widget = item.widget()
@@ -321,6 +369,31 @@ class ImageGallery(QWidget):
             list: List of image file paths.
         """
         return self._image_paths.copy()
+
+    def get_current_file_path(self):
+        """Get the path of the currently selected thumbnail.
+
+        Returns:
+            str: Path to the currently selected file, or None if no file is selected.
+        """
+        if not self._image_paths or self._last_thumbnail_clicked_index < 0:
+            return None
+        return self._image_paths[self._last_thumbnail_clicked_index]
+
+    def mark_current_file(self, value):
+        """Mark the currently selected thumbnail.
+
+        Returns:
+            bool: True if a file was marked, False if no file is selected.
+        """
+        if not self._image_paths or self._last_thumbnail_clicked_index < 0:
+            return False
+
+        # Get the thumbnail widget for the current file
+        thumbnail_widget = self._thumbnail_widgets[self._last_thumbnail_clicked_index]
+        # set the mark to value
+        thumbnail_widget.setMarked(value)
+        return True
 
     def set_thumbnail_size(self, size):
         """Set the size for thumbnails.
