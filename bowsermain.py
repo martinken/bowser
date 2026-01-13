@@ -9,11 +9,14 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QFileDialog,
     QHBoxLayout,
+    QLabel,
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSplitter,
     QStyleFactory,
     QVBoxLayout,
@@ -25,6 +28,128 @@ from imagegallery import ImageGallery
 from imageviewer import ImageViewer
 from metadataviewer import MetadataViewer
 from videoviewer import VideoViewer
+
+
+class KeybindingsDialog(QDialog):
+    """Dialog to display all keybindings for the application."""
+
+    def __init__(self, parent=None):
+        """Initialize the KeybindingsDialog.
+
+        Args:
+            parent: Parent widget.
+        """
+        super().__init__(parent)
+        self.setWindowTitle("Keybindings")
+        self.setMinimumWidth(500)
+        self.setMinimumHeight(400)
+
+        # Create main layout
+        main_layout = QVBoxLayout(self)
+
+        # Create title
+        title = QLabel("Application Keybindings")
+        title.setStyleSheet("font-size: 16px; font-weight: bold;")
+        main_layout.addWidget(title)
+
+        # Create scroll area for keybindings
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+
+        # Create content widget
+        content_widget = QWidget()
+        content_layout = QVBoxLayout(content_widget)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Add keybindings information
+        keybindings_info = """
+        <html>
+        <head>
+            <style>
+                table {
+                    width: 100%;
+                    border-collapse: collapse;
+                }
+                th, td {
+                    padding: 8px;
+                    text-align: left;
+                    border-bottom: 1px solid #555;
+                }
+                th {
+                    background-color: #333;
+                    font-weight: bold;
+                }
+                tr:hover {
+                    background-color: #444;
+                }
+            </style>
+        </head>
+        <body>
+            <table>
+                <tr>
+                    <th>Action</th>
+                    <th>Shortcut</th>
+                </tr>
+                <tr>
+                    <td>Open Folder</td>
+                    <td>Ctrl+O</td>
+                </tr>
+                <tr>
+                    <td>Delete Marked Files</td>
+                    <td>Ctrl+D</td>
+                </tr>
+                <tr>
+                    <td>Prune Empty Directories</td>
+                    <td>Ctrl+P</td>
+                </tr>
+                <tr>
+                    <td>Exit Application</td>
+                    <td>Ctrl+Q</td>
+                </tr>
+                <tr>
+                    <td>Navigate to Previous Folder</td>
+                    <td>W</td>
+                </tr>
+                <tr>
+                    <td>Navigate to Next Folder</td>
+                    <td>S</td>
+                </tr>
+                <tr>
+                    <td>Previous Image/Video</td>
+                    <td>A</td>
+                </tr>
+                <tr>
+                    <td>Next Image/Video</td>
+                    <td>D</td>
+                </tr>
+                <tr>
+                    <td>Fit Image to Viewer</td>
+                    <td>R</td>
+                </tr>
+                <tr>
+                    <td>View Image at 1:1 Size</td>
+                    <td>1</td>
+                </tr>
+                <tr>
+                    <td>Mark Current File</td>
+                    <td>X</td>
+                </tr>
+            </table>
+        </body>
+        </html>
+        """
+
+        info_label = QLabel(keybindings_info)
+        info_label.setWordWrap(True)
+        content_layout.addWidget(info_label)
+
+        # Add some spacing
+        content_layout.addStretch()
+
+        scroll_area.setWidget(content_widget)
+        main_layout.addWidget(scroll_area)
+
+        self.setLayout(main_layout)
 
 
 class BowserMain(QMainWindow):
@@ -129,80 +254,88 @@ class BowserMain(QMainWindow):
         """Create the menu bar with File menu and actions."""
         menu_bar = self.menuBar()
 
-        # Create File menu
-        file_menu = menu_bar.addMenu("File")
+        # Create Main menu
+        main_menu = menu_bar.addMenu("Menu")
 
         # Create Open Folder action
         open_folder_action = QAction("Open Folder", self)
         open_folder_action.setShortcut("Ctrl+O")
         open_folder_action.triggered.connect(self._open_root_folder)
-        file_menu.addAction(open_folder_action)
+        main_menu.addAction(open_folder_action)
 
         # Add separator
-        file_menu.addSeparator()
+        main_menu.addSeparator()
 
         # Create Delete Marked Files action
         delete_marked_action = QAction("Delete Marked Files", self)
         delete_marked_action.setShortcut("Ctrl+D")
         delete_marked_action.triggered.connect(self._delete_marked_files)
-        file_menu.addAction(delete_marked_action)
+        main_menu.addAction(delete_marked_action)
 
         # Create Prune Empty Directories action
         prune_action = QAction("Prune Empty Directories", self)
         prune_action.setShortcut("Ctrl+P")
         prune_action.triggered.connect(self._prune_empty_directories_action)
-        file_menu.addAction(prune_action)
+        main_menu.addAction(prune_action)
 
         # Add separator
-        file_menu.addSeparator()
+        main_menu.addSeparator()
+
+        # Create Keybindings action
+        keybindings_action = QAction("Keybindings", self)
+        keybindings_action.setShortcut("Ctrl+K")
+        keybindings_action.triggered.connect(self._show_keybindings)
+        main_menu.addAction(keybindings_action)
+
+        # Add separator
+        main_menu.addSeparator()
 
         # Create Exit action
         exit_action = QAction("Exit", self)
         exit_action.setShortcut("Ctrl+Q")
         exit_action.triggered.connect(self.close)
-        file_menu.addAction(exit_action)
+        main_menu.addAction(exit_action)
 
-    def _navigate_to_next_folder(self):
-        """Navigate to the next folder in the directory tree."""
-        next_index = self._directory_tree.navigate_to_next_folder()
-        if next_index:
-            self._on_folder_clicked(next_index)
+    def _show_keybindings(self):
+        """Show the keybindings dialog."""
+        dialog = KeybindingsDialog(self)
+        dialog.exec()
 
     def _prune_empty_directories_action(self):
         """Handle Prune Empty Directories menu action."""
         # Get the current root folder from the file system model
         root_path = self._directory_tree.get_file_system_model().rootPath()
-        
+
         if not root_path or not os.path.isdir(root_path):
             QMessageBox.warning(
                 self,
                 "No Folder Selected",
                 "Please select a folder first.",
-                QMessageBox.StandardButton.Ok
+                QMessageBox.StandardButton.Ok,
             )
             return
-        
+
         # Confirm with user
         confirm = QMessageBox.question(
             self,
             "Confirm Prune Empty Directories",
-            f"Are you sure you want to remove all empty directories below:\n{root_path}?\n\n" +
-            "This action cannot be undone.",
+            f"Are you sure you want to remove all empty directories below:\n{root_path}?\n\n"
+            + "This action cannot be undone.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
-        
+
         if confirm == QMessageBox.StandardButton.Yes:
             # Prune empty directories
             removed_count = self._directory_tree.prune_empty_directories(root_path)
-            
+
             # Show result message
             QMessageBox.information(
                 self,
                 "Directories Pruned",
                 f"Successfully removed {removed_count} empty directory(ies).",
-                QMessageBox.StandardButton.Ok
+                QMessageBox.StandardButton.Ok,
             )
-            
+
             # Refresh the directory tree
             if root_path:
                 self._directory_tree.open_root_folder(root_path)
@@ -245,11 +378,6 @@ class BowserMain(QMainWindow):
         """
         # Load images from the selected folder into the gallery
         self._image_gallery.load_images_from_folder(folder_path)
-
-        # Update metadata display
-        self._metadata_display.setMetadata(
-            f"Selected folder: {folder_path}\n\nImages found: {len(self._image_gallery.get_image_paths())}"
-        )
 
     def _on_thumbnail_clicked(self, file_path):
         """Handle thumbnail click event.
@@ -396,7 +524,11 @@ class BowserMain(QMainWindow):
         Args:
             event: QKeyEvent
         """
-        if event.key() == Qt.Key.Key_A:
+        if event.key() == Qt.Key.Key_W:
+            self._directory_tree.navigate_to_previous_folder()
+        elif event.key() == Qt.Key.Key_S:
+            self._directory_tree.navigate_to_next_folder()
+        elif event.key() == Qt.Key.Key_A:
             self._on_previous_clicked()
         elif event.key() == Qt.Key.Key_D:
             self._on_next_clicked()
@@ -406,8 +538,6 @@ class BowserMain(QMainWindow):
             self._image_viewer.fullSize()
         elif event.key() == Qt.Key.Key_X:
             self._on_mark_file_clicked()
-        elif event.key() == Qt.Key.Key_S:
-            self._navigate_to_next_folder()
 
     def _apply_dark_mode(self):
         """Apply dark mode using Fusion style with custom dark palette."""

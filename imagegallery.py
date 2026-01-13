@@ -178,10 +178,12 @@ class ImageGallery(QWidget):
                     if ext in supported_extensions:
                         self._image_paths.append(file_path)
 
-        # Display new thumbnails
-        self._clear_thumbnails()
-        self._build_thumbnails()
-        self._display_thumbnails()
+        if len(self._image_paths):
+            # Display new thumbnails
+            self._clear_thumbnails()
+            self._build_thumbnails()
+            self._display_thumbnails()
+            self._on_thumbnail_clicked(0)
 
     def _get_target_number_of_columns(self):
         # Calculate grid layout based on available width
@@ -293,8 +295,31 @@ class ImageGallery(QWidget):
         self._thumbnail_widgets[self._last_thumbnail_clicked_index].setHighlight(False)
         self._last_thumbnail_clicked_index = index
         self._thumbnail_widgets[self._last_thumbnail_clicked_index].setHighlight(True)
+
+        # Scroll to make the selected thumbnail visible
+        self._scroll_to_thumbnail(index)
+
         # Emit signal with the image path
         self.thumbnailClicked.emit(self._image_paths[index])
+
+    def _scroll_to_thumbnail(self, index):
+        """Scroll the scroll area to make the specified thumbnail visible.
+
+        Args:
+            index (int): Index of the thumbnail to scroll to.
+        """
+        if (
+            not self._thumbnail_widgets
+            or index < 0
+            or index >= len(self._thumbnail_widgets)
+        ):
+            return
+
+        thumbnail_widget = self._thumbnail_widgets[index]
+
+        # Use the built-in method to ensure the widget is visible
+        # This handles all the coordinate calculations automatically
+        self._scroll_area.ensureWidgetVisible(thumbnail_widget, 0, 0)
 
     def nextThumbnail(self):
         """Navigate to the next thumbnail in the gallery.

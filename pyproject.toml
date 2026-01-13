@@ -1,7 +1,7 @@
 [project]
 name = "bowser"
 version = "0.1.0"
-description = "Add your description here"
+description = "viewer manager for AI generated images and video"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

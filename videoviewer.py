@@ -3,9 +3,16 @@
 import os
 
 from PySide6.QtCore import QUrl
-from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+from PySide6.QtMultimedia import QAudioOutput, QMediaMetaData, QMediaPlayer, QVideoSink
 from PySide6.QtMultimediaWidgets import QVideoWidget
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
 
 class VideoViewer(QWidget):
@@ -27,18 +34,25 @@ class VideoViewer(QWidget):
         self.audioOutput = QAudioOutput(self)
         self.mediaPlayer.setAudioOutput(self.audioOutput)
         self.mediaPlayer.setVideoOutput(self.videoWidget)
-        
+
+        # Create video sink for frame capture
+        self.videoSink = QVideoSink(self)
+
         # Enable loop by default
         self.mediaPlayer.setLoops(-1)  # -1 means infinite looping
 
         # Create controls
         self.controlsLayout = QHBoxLayout()
+        self.prevFrameButton = QPushButton("-1")
         self.playButton = QPushButton("Play")
         self.pauseButton = QPushButton("Pause")
-        self.stopButton = QPushButton("Stop")
+        self.nextFrameButton = QPushButton("+1")
+        self.captureFrameButton = QPushButton("Capture Frame")
         self.controlsLayout.addWidget(self.playButton)
         self.controlsLayout.addWidget(self.pauseButton)
-        self.controlsLayout.addWidget(self.stopButton)
+        self.controlsLayout.addWidget(self.prevFrameButton)
+        self.controlsLayout.addWidget(self.nextFrameButton)
+        self.controlsLayout.addWidget(self.captureFrameButton)
 
         # Create status label
         self.statusLabel = QLabel("No video loaded")
@@ -54,11 +68,18 @@ class VideoViewer(QWidget):
         # Connect signals
         self.playButton.clicked.connect(self.play)
         self.pauseButton.clicked.connect(self.pause)
-        self.stopButton.clicked.connect(self.stop)
+        self.prevFrameButton.clicked.connect(self.prevFrame)
+        self.nextFrameButton.clicked.connect(self.nextFrame)
+        self.captureFrameButton.clicked.connect(self.captureFrame)
 
         # Connect media player signals
         self.mediaPlayer.mediaStatusChanged.connect(self.handleMediaStatusChanged)
         self.mediaPlayer.errorOccurred.connect(self.handleError)
+        self.mediaPlayer.positionChanged.connect(self.handlePositionChanged)
+        self.mediaPlayer.durationChanged.connect(self.handleDurationChanged)
+
+        # Connect video sink signal for frame capture
+        self.videoSink.videoFrameChanged.connect(self.handleVideoFrameChanged)
 
     def loadVideo(self, video_path):
         """Load and prepare a video file for playback.
@@ -75,11 +96,11 @@ class VideoViewer(QWidget):
             self.statusLabel.setText(f"Error: Unsupported format - {file_ext}")
             return False
 
+        # stop any current video
+        self.stop()
+
         # Set the media source
         self.mediaPlayer.setSource(QUrl.fromLocalFile(video_path))
-
-        # Update status
-        self.statusLabel.setText(f"Loaded: {os.path.basename(video_path)}")
 
         return True
 
@@ -94,7 +115,35 @@ class VideoViewer(QWidget):
     def stop(self):
         """Stop playback and reset the video."""
         self.mediaPlayer.stop()
-        self.statusLabel.setText("Video stopped")
+
+    def prevFrame(self):
+        """Move to previous frame (pause if playing)."""
+        # Pause playback if it's playing
+        if self.mediaPlayer.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+            self.mediaPlayer.pause()
+
+        # Move back one frame using actual frame rate
+        fps = self.getFrameRate()
+        frame_duration_ms = int(1000 / fps)
+        current_pos = self.mediaPlayer.position()
+        new_pos = max(0, current_pos - frame_duration_ms)
+        self.mediaPlayer.setPosition(new_pos)
+
+    def nextFrame(self):
+        """Move to next frame (pause if playing)."""
+        # Pause playback if it's playing
+        if self.mediaPlayer.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+            self.mediaPlayer.pause()
+
+        # Move forward one frame using actual frame rate
+        fps = self.getFrameRate()
+        frame_duration_ms = int(1000 / fps)
+        current_pos = self.mediaPlayer.position()
+        new_pos = current_pos + frame_duration_ms
+
+        # Don't go past the end of the video
+        if new_pos < self.mediaPlayer.duration():
+            self.mediaPlayer.setPosition(new_pos)
 
     def handleMediaStatusChanged(self, status):
         """Handle media player status changes.
@@ -103,7 +152,8 @@ class VideoViewer(QWidget):
             status: The media status from QMediaPlayer.
         """
         if status == QMediaPlayer.MediaStatus.LoadedMedia:
-            self.statusLabel.setText("Video loaded and ready to play (loop enabled)")
+            # Don't override the frame info that was set in handleDurationChanged
+            pass
         elif status == QMediaPlayer.MediaStatus.BufferingMedia:
             self.statusLabel.setText("Buffering...")
         elif status == QMediaPlayer.MediaStatus.EndOfMedia:
@@ -136,3 +186,108 @@ class VideoViewer(QWidget):
             self.videoWidget.setFullScreen(True)
         else:
             self.videoWidget.setFullScreen(False)
+
+    def handlePositionChanged(self, position):
+        """Handle position changes during playback.
+
+        Args:
+            position (int): Current playback position in milliseconds.
+        """
+        if self.mediaPlayer.duration() > 0:
+            # Get the actual frame rate from metadata
+            fps = self.getFrameRate()
+            current_frame = int((position / 1000.0) * fps)
+            total_frames = int((self.mediaPlayer.duration() / 1000.0) * fps)
+
+            # Update status with frame information
+            self.statusLabel.setText(
+                f"Frame: {current_frame}/{total_frames} @ {fps}fps "
+                f"({position / 1000:.1f}s/{self.mediaPlayer.duration() / 1000:.1f}s)"
+            )
+
+    def getFrameRate(self):
+        """Get the frame rate from media metadata, or return default.
+
+        Returns:
+            float: Frame rate in frames per second
+        """
+        # Try to get frame rate from metadata
+        fps = self.mediaPlayer.metaData().value(QMediaMetaData.Key.VideoFrameRate)
+        if isinstance(fps, float):
+            fps = float(fps) if fps is not None else 30
+            return fps
+        return 30.0
+
+    def handleDurationChanged(self, duration):
+        """Handle duration changes when media is loaded.
+
+        Args:
+            duration (int): Total duration in milliseconds.
+        """
+        if duration > 0:
+            # Get the actual frame rate from metadata
+            fps = self.getFrameRate()
+            total_frames = int((duration / 1000.0) * fps)
+
+            # Update status to include frame count and frame rate
+            self.statusLabel.setText(
+                f"Loaded: {os.path.basename(self.mediaPlayer.source().toLocalFile())} "
+                f"({total_frames} frames @ {fps}fps, {duration / 1000:.1f}s)"
+            )
+
+    def hide(self):
+        """Override hide to stop playback before hiding the widget."""
+        self.stop()
+        super().hide()
+
+    def captureFrame(self):
+        """Capture the current video frame.
+
+        Returns:
+            QImage: The captured video frame, or None if no frame is available
+        """
+        # backup two frames and forward one to get ready
+        self.prevFrame()
+        self.prevFrame()
+        self.nextFrame()
+
+        # set the video sink
+        self._old_video_sink = self.mediaPlayer.videoSink()
+        self.mediaPlayer.setVideoSink(self.videoSink)
+
+        # play a frame
+        self.nextFrame()
+
+    def handleVideoFrameChanged(self, frame):
+        """Handle video frame changes from the video sink.
+
+        Args:
+            frame: The video frame from QVideoSink
+        """
+        # Get the current video frame from the video sink
+        videoFrame = self.videoSink.videoFrame()
+
+        # remove the sink
+        self.mediaPlayer.setVideoSink(self._old_video_sink)
+
+        if videoFrame.isValid():
+            # Convert the video frame to QImage
+            image = videoFrame.toImage()
+
+            # Save the frame as PNG
+            # Generate a filename based on the video source and current frame number
+            video_path = self.mediaPlayer.source().toLocalFile()
+            base_name = os.path.splitext(os.path.basename(video_path))[0]
+
+            # Get the current frame number
+            fps = self.getFrameRate()
+            current_frame = int((self.mediaPlayer.position() / 1000.0) * fps)
+            frame_filename = f"{base_name}_frame_{current_frame:06d}.png"
+
+            # Save the image
+            if image.save(frame_filename):
+                self.statusLabel.setText(f"Frame saved: {frame_filename}")
+            else:
+                self.statusLabel.setText("Error: Failed to save frame")
+
+        return

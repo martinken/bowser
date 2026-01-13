@@ -14,7 +14,7 @@ class DirectoryTree(QTreeView):
             parent: Parent widget.
         """
         super().__init__(parent)
-        
+
         # Create file system model for the directory tree
         self._file_system_model = QFileSystemModel()
         self._file_system_model.setRootPath("")
@@ -54,13 +54,12 @@ class DirectoryTree(QTreeView):
         """
         # Check if the path is a valid directory
         import os
+
         if os.path.isdir(folder_path):
             # Set the root path of the file system model to the selected folder
             self._file_system_model.setRootPath(folder_path)
             # Expand the root item
-            self.setRootIndex(
-                self._file_system_model.index(folder_path)
-            )
+            self.setRootIndex(self._file_system_model.index(folder_path))
             # Expand all directories under the root
             self._expand_all_directories(self.rootIndex())
 
@@ -87,46 +86,127 @@ class DirectoryTree(QTreeView):
             return self._file_system_model.filePath(index)
         return ""
 
+    def navigate_to_previous_folder(self):
+        """Navigate to the previous folder in the directory tree."""
+        # Get the current root folder
+        root_path = self._file_system_model.rootPath()
+        if not root_path:
+            return
+
+        # Get the current root index
+        root_index = self.rootIndex()
+        if not root_index.isValid():
+            return
+
+        # Find the currently selected index
+        current_index = self.currentIndex()
+
+        # If no selection, start from the root
+        if not current_index.isValid():
+            current_index = root_index
+
+        # Get the parent of the current index
+        parent_index = current_index.parent()
+
+        # If we're at root level, try to select the previous sibling
+        if not parent_index.isValid():
+            parent_index = root_index
+
+        # Get the row of the current index
+        current_row = current_index.row()
+
+        # Try to select the previous sibling
+        prev_row = current_row - 1
+        if prev_row >= 0 and prev_row < self._file_system_model.rowCount(parent_index):
+            prev_index = self._file_system_model.index(prev_row, 0, parent_index)
+
+            # If it's a directory, select it
+            if self._file_system_model.isDir(prev_index):
+                self.setCurrentIndex(prev_index)
+                self.scrollTo(prev_index)
+                # Fire the clicked signal
+                self.clicked.emit(prev_index)
+                return prev_index
+
+        # If we're at the start of the current level, try to go to parent's previous sibling
+        # or recursively check parent levels
+        def find_previous_folder(index):
+            """Recursively find the previous folder at any level."""
+            while index.isValid():
+                parent = index.parent()
+                parent_row = index.row()
+
+                # Try to find previous sibling at current level
+                if parent.isValid():
+                    prev_sibling_row = parent_row - 1
+                    if (
+                        prev_sibling_row >= 0
+                        and prev_sibling_row < self._file_system_model.rowCount(parent)
+                    ):
+                        prev_sibling = self._file_system_model.index(
+                            prev_sibling_row, 0, parent
+                        )
+                        if self._file_system_model.isDir(prev_sibling):
+                            return prev_sibling
+
+                # Move up to parent
+                index = parent
+
+            return None
+
+        # Try to find previous folder
+        prev_folder = find_previous_folder(parent_index)
+        if prev_folder and prev_folder.isValid():
+            self.setCurrentIndex(prev_folder)
+            self.scrollTo(prev_folder)
+            # Fire the clicked signal
+            self.clicked.emit(prev_folder)
+            return prev_folder
+
+        return None
+
     def navigate_to_next_folder(self):
         """Navigate to the next folder in the directory tree."""
         # Get the current root folder
         root_path = self._file_system_model.rootPath()
         if not root_path:
             return
-        
+
         # Get the current root index
         root_index = self.rootIndex()
         if not root_index.isValid():
             return
-        
+
         # Find the currently selected index
         current_index = self.currentIndex()
-        
+
         # If no selection, start from the root
         if not current_index.isValid():
             current_index = root_index
-        
+
         # Get the parent of the current index
         parent_index = current_index.parent()
-        
+
         # If we're at root level, try to select the next sibling
         if not parent_index.isValid():
             parent_index = root_index
-        
+
         # Get the row of the current index
         current_row = current_index.row()
-        
+
         # Try to select the next sibling
         next_row = current_row + 1
         if next_row < self._file_system_model.rowCount(parent_index):
             next_index = self._file_system_model.index(next_row, 0, parent_index)
-            
+
             # If it's a directory, select it
             if self._file_system_model.isDir(next_index):
                 self.setCurrentIndex(next_index)
                 self.scrollTo(next_index)
+                # Fire the clicked signal
+                self.clicked.emit(next_index)
                 return next_index
-        
+
         # If we're at the end of the current level, try to go to parent's next sibling
         # or recursively check parent levels
         def find_next_folder(index):
@@ -134,27 +214,31 @@ class DirectoryTree(QTreeView):
             while index.isValid():
                 parent = index.parent()
                 parent_row = index.row()
-                
+
                 # Try to find next sibling at current level
                 if parent.isValid():
                     next_sibling_row = parent_row + 1
                     if next_sibling_row < self._file_system_model.rowCount(parent):
-                        next_sibling = self._file_system_model.index(next_sibling_row, 0, parent)
+                        next_sibling = self._file_system_model.index(
+                            next_sibling_row, 0, parent
+                        )
                         if self._file_system_model.isDir(next_sibling):
                             return next_sibling
-                
+
                 # Move up to parent
                 index = parent
-            
+
             return None
-        
+
         # Try to find next folder
         next_folder = find_next_folder(parent_index)
         if next_folder and next_folder.isValid():
             self.setCurrentIndex(next_folder)
             self.scrollTo(next_folder)
+            # Fire the clicked signal
+            self.clicked.emit(next_folder)
             return next_folder
-        
+
         return None
 
     def prune_empty_directories(self, root_folder):
@@ -167,7 +251,7 @@ class DirectoryTree(QTreeView):
             int: Number of directories removed.
         """
         import os
-        
+
         if not os.path.isdir(root_folder):
             return 0
 
@@ -221,14 +305,12 @@ class DirectoryTree(QTreeView):
                         ldb_path = os.path.join(directory, ldb_file)
                         if os.path.exists(ldb_path):
                             try:
-                                # os.remove(ldb_path)
-                                print(f"remove {ldb_path}")
+                                os.remove(ldb_path)
                             except (OSError, PermissionError) as e:
                                 print(f"Error removing {ldb_file} in {directory}: {e}")
 
                     # Remove the now-empty directory
-                    # os.rmdir(directory)
-                    print(f"remove {directory}")
+                    os.rmdir(directory)
                     removed_count += 1
                 except (OSError, PermissionError) as e:
                     print(f"Error removing directory {directory}: {e}")
@@ -237,3 +319,19 @@ class DirectoryTree(QTreeView):
         _prune_recursive(root_folder)
 
         return removed_count
+
+    def keyPressEvent(self, event):
+        """Handle key press events.
+
+        Args:
+            event: QKeyEvent
+        """
+        # Handle W key for navigating to previous folder
+        if event.key() == Qt.Key.Key_W:
+            self.navigate_to_previous_folder()
+        # Handle S key for navigating to next folder
+        elif event.key() == Qt.Key.Key_S:
+            self.navigate_to_next_folder()
+        else:
+            # Call parent class handler for other keys
+            super().keyPressEvent(event)
