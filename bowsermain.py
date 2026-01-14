@@ -158,6 +158,7 @@ class BowserMain(QMainWindow):
 
         # start with no marked files
         self._marked_files = []
+        self._last_file_path = ""
 
         # Apply dark mode (Fusion style with dark palette)
         self._apply_dark_mode()
@@ -366,9 +367,11 @@ class BowserMain(QMainWindow):
         """Handle folder click event and invoke read_folder callback."""
         if index.isValid():
             # Get the file path from the model
-            file_path = self._directory_tree.get_file_system_model().filePath(index)
-            # Invoke the read_folder callback with the folder path
-            self.read_folder(file_path)
+            file_path = self._directory_tree.get_folder_path_from_index(index)
+            if self._last_file_path != file_path:
+                # Invoke the read_folder callback with the folder path
+                self._last_file_path = file_path
+                self.read_folder(file_path)
 
     def read_folder(self, folder_path):
         """Callback method to be invoked when a folder is clicked.

@@ -24,22 +24,53 @@ from PySide6.QtWidgets import (
 class DragLabel(QLabel):
     """A custom QLabel that supports drag and drop operations."""
 
-    def __init__(self, image_path, parent=None):
+    def __init__(self, index, parent=None):
         super().__init__(parent)
-        self.image_path = image_path
+        self.index = index
         self.setAcceptDrops(True)
         self.isVideo = False
         self.isMarked = False
         self.isHighlighted = False
         self.updateBorder()
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        # Make thumbnail clickable
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
 
-    def setIsVideo(self, value):
-        self.isVideo = value
-        self.updateBorder()
-
-    def setHighlight(self, value):
+    def setHighlighted(self, value):
         self.isHighlighted = value
         self.updateBorder()
+
+    def set_image_path(self, image_path):
+        video_extensions = [".mp4", ".mov"]
+        # set _is_video if the file is a video (mp4 or mov)
+        file_ext = os.path.splitext(image_path)[1].lower()
+        if file_ext in video_extensions:
+            self._is_video = True
+        else:
+            self._is_video = True
+        self.image_path = image_path
+        self.updateBorder()
+
+    def load_image(self):
+        # Load and display thumbnail
+        thumbnail_path = self.image_path
+        # if there is a swarmpreview for the file then use it for the pixmap
+        swarm_preview_path = os.path.splitext(self.image_path)[0] + ".swarmpreview.jpg"
+        if os.path.exists(swarm_preview_path):
+            thumbnail_path = swarm_preview_path
+        pixmap = QPixmap(thumbnail_path)
+        if not pixmap.isNull():
+            # Scale pixmap to thumbnail size while maintaining aspect ratio
+            scaled_pixmap = pixmap.scaled(
+                self.maximumSize(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            self.setPixmap(scaled_pixmap)
+        else:
+            self.setText("Image")
+            self.setStyleSheet("color: gray;")
 
     def updateBorder(self):
         if self.isMarked:
@@ -178,9 +209,10 @@ class ImageGallery(QWidget):
                     if ext in supported_extensions:
                         self._image_paths.append(file_path)
 
+        # Clear existing thumbnails and recreate with new layout
+        self._clear_thumbnails()
         if len(self._image_paths):
-            # Display new thumbnails
-            self._clear_thumbnails()
+            self._create_empty_thumbnails()
             self._build_thumbnails()
             self._display_thumbnails()
             self._on_thumbnail_clicked(0)
@@ -204,15 +236,25 @@ class ImageGallery(QWidget):
             columns = max(1, available_width // (thumbnail_width + spacing))
         return columns
 
+    def _create_empty_thumbnails(self):
+        if not self._image_paths:
+            return
+        # make sure to create enough widgets
+        if len(self._image_paths) > len(self._thumbnail_widgets):
+            for i in range(len(self._thumbnail_widgets), len(self._image_paths)):
+                # Create thumbnail widget
+                self._thumbnail_widgets.append(self._create_thumbnail_widget(i))
+
     def _build_thumbnails(self):
         if not self._image_paths:
             return
 
-        # Clear existing thumbnails and recreate with new layout
-        self._clear_thumbnails()
         for i, image_path in enumerate(self._image_paths):
             # Create thumbnail widget
-            self._thumbnail_widgets.append(self._create_thumbnail_widget(image_path, i))
+            self._thumbnail_widgets[i].setHighlighted(False)
+            self._thumbnail_widgets[i].setMinimumSize(self._thumbnail_size)
+            self._thumbnail_widgets[i].setMaximumSize(self._thumbnail_size)
+            self._thumbnail_widgets[i].setImagePath(image_path)
 
     def _display_thumbnails(self):
         """Display thumbnails for all loaded images."""
@@ -222,12 +264,14 @@ class ImageGallery(QWidget):
         columns = self._get_target_number_of_columns()
         self._current_columns = columns
 
-        for i, thumbnail_widget in enumerate(self._thumbnail_widgets):
+        for i, image_path in enumerate(self._image_paths):
             row = i // columns
             col = i % columns
-            self._content_layout.addWidget(thumbnail_widget, row, col)
+            self._content_layout.addWidget(self._thumbnail_widgets[i], row, col)
+            self._thumbnail_widgets[i].show()
+            # TODO: call load_image() in a QRunnable
 
-    def _create_thumbnail_widget(self, image_path, index):
+    def _create_thumbnail_widget(self, index):
         """Create a widget for displaying a thumbnail.
 
         Args:
@@ -237,41 +281,7 @@ class ImageGallery(QWidget):
             QWidget: A widget containing the thumbnail.
         """
         # Create label for thumbnail with drag support
-        thumbnail_label = DragLabel(image_path)
-        thumbnail_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        thumbnail_label.setSizePolicy(
-            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
-        )
-        thumbnail_label.setMinimumSize(self._thumbnail_size)
-        thumbnail_label.setMaximumSize(self._thumbnail_size)
-
-        # Load and display thumbnail
-        thumbnail_path = image_path
-        # if there is a swarmpreview for the file then use it for the pixmap
-        swarm_preview_path = os.path.splitext(image_path)[0] + ".swarmpreview.jpg"
-        if os.path.exists(swarm_preview_path):
-            thumbnail_path = swarm_preview_path
-        pixmap = QPixmap(thumbnail_path)
-        if not pixmap.isNull():
-            # Scale pixmap to thumbnail size while maintaining aspect ratio
-            scaled_pixmap = pixmap.scaled(
-                self._thumbnail_size,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-            thumbnail_label.setPixmap(scaled_pixmap)
-        else:
-            thumbnail_label.setText("Image")
-            thumbnail_label.setStyleSheet("color: gray;")
-
-        # Change outline color to blue if the file is a video (mp4 or mov)
-        video_extensions = [".mp4", ".mov"]
-        file_ext = os.path.splitext(image_path)[1].lower()
-        if file_ext in video_extensions:
-            thumbnail_label.setIsVideo(True)
-
-        # Make thumbnail clickable
-        thumbnail_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        thumbnail_label = DragLabel(index)
 
         # Override mousePressEvent to handle both click and drag initialization
         def handle_mouse_press(event):
@@ -283,7 +293,6 @@ class ImageGallery(QWidget):
                 self._on_thumbnail_clicked(index)
 
         thumbnail_label.mousePressEvent = handle_mouse_press
-
         return thumbnail_label
 
     def _on_thumbnail_clicked(self, index):
@@ -292,9 +301,11 @@ class ImageGallery(QWidget):
         Args:
             image_path (str): Path to the clicked image file.
         """
-        self._thumbnail_widgets[self._last_thumbnail_clicked_index].setHighlight(False)
+        self._thumbnail_widgets[self._last_thumbnail_clicked_index].setHighlighted(
+            False
+        )
         self._last_thumbnail_clicked_index = index
-        self._thumbnail_widgets[self._last_thumbnail_clicked_index].setHighlight(True)
+        self._thumbnail_widgets[self._last_thumbnail_clicked_index].setHighlighted(True)
 
         # Scroll to make the selected thumbnail visible
         self._scroll_to_thumbnail(index)
@@ -362,16 +373,14 @@ class ImageGallery(QWidget):
         return False
 
     def _clear_thumbnails(self):
-        """Clear all thumbnails from the gallery."""
-        # Remove all widgets from the grid layout
-        self._thumbnail_widgets = []
+        """hide all thumbnails from the gallery."""
         self._last_thumbnail_clicked_index = 0
+        self._current_columns = -1
         while self._content_layout.count():
             item = self._content_layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
-                widget.deleteLater()
-        self._current_columns = -1
+                widget.hide()
 
     def resizeEvent(self, event):
         """Handle resize events to adjust the thumbnail layout.

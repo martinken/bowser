@@ -1,7 +1,20 @@
 """Directory tree widget for browsing file system."""
 
-from PySide6.QtCore import QDir, Qt
+from PySide6.QtCore import QDir, QPersistentModelIndex, QSortFilterProxyModel, Qt
 from PySide6.QtWidgets import QFileSystemModel, QTreeView
+
+
+class FileProxyModel(QSortFilterProxyModel):
+    def setIndexPath(self, index):
+        self._index_path = index
+        self.invalidateFilter()
+
+    def filterAcceptsRow(self, sourceRow, sourceParent):
+        if hasattr(self, "_index_path"):
+            ix = self.sourceModel().index(sourceRow, 0, sourceParent)
+            if self._index_path.parent() == sourceParent and self._index_path != ix:
+                return False
+        return super(FileProxyModel, self).filterAcceptsRow(sourceRow, sourceParent)
 
 
 class DirectoryTree(QTreeView):
@@ -21,7 +34,11 @@ class DirectoryTree(QTreeView):
         self._file_system_model.setFilter(
             QDir.Filter.AllDirs | QDir.Filter.NoDotAndDotDot
         )
-        self.setModel(self._file_system_model)
+        # self._file_system_model.setFilter(QDir.Filter.AllDirs)
+
+        self._proxy = FileProxyModel(self)
+        self._proxy.setSourceModel(self._file_system_model)
+        self.setModel(self._proxy)
 
         # Configure the tree view
         self.setHeaderHidden(True)
@@ -56,12 +73,29 @@ class DirectoryTree(QTreeView):
         import os
 
         if os.path.isdir(folder_path):
-            # Set the root path of the file system model to the selected folder
-            self._file_system_model.setRootPath(folder_path)
-            # Expand the root item
-            self.setRootIndex(self._file_system_model.index(folder_path))
-            # Expand all directories under the root
-            self._expand_all_directories(self.rootIndex())
+            parent_dir = os.path.abspath(os.path.join(folder_path, os.pardir))
+            # Set the root path to the parent directory
+            self._file_system_model.setRootPath(parent_dir)
+
+            # Set root index to show the folder and its children
+            folder_index = self._file_system_model.index(folder_path)
+
+            self._proxy.setIndexPath(QPersistentModelIndex(folder_index))
+            self.setRootIndex(
+                self._proxy.mapFromSource(self._file_system_model.index(parent_dir))
+            )
+
+            # Find and expand the specific folder
+            if folder_index.isValid():
+                proxy_folder_index = self._proxy.mapFromSource(folder_index)
+                # Expand all directories under the root
+                self._expand_all_directories(proxy_folder_index)
+                # Select the folder
+                self.setCurrentIndex(proxy_folder_index)
+                # Scroll to make it visible
+                self.scrollTo(proxy_folder_index)
+                # Fire the clicked signal
+                self.clicked.emit(proxy_folder_index)
 
     def _expand_all_directories(self, index):
         """Recursively expand all directories starting from the given index."""
@@ -69,11 +103,12 @@ class DirectoryTree(QTreeView):
         self.setExpanded(index, True)
 
         # Iterate through all children
-        for row in range(self._file_system_model.rowCount(index)):
-            child_index = self._file_system_model.index(row, 0, index)
+        source_index = self._proxy.mapToSource(index)
+        for row in range(self._file_system_model.rowCount(source_index)):
+            child_index = self._file_system_model.index(row, 0, source_index)
             # If the child is a directory, expand it
             if self._file_system_model.isDir(child_index):
-                self._expand_all_directories(child_index)
+                self._expand_all_directories(self._proxy.mapFromSource(child_index))
 
     def get_selected_folder_path(self):
         """Get the path of the currently selected folder.
@@ -83,7 +118,17 @@ class DirectoryTree(QTreeView):
         """
         index = self.currentIndex()
         if index.isValid():
-            return self._file_system_model.filePath(index)
+            return self._file_system_model.filePath(self._proxy.mapToSource(index))
+        return ""
+
+    def get_folder_path_from_index(self, index):
+        """Get the path for the index
+
+        Returns:
+            str: Path to the selected folder, or empty string if none selected.
+        """
+        if index.isValid():
+            return self._file_system_model.filePath(self._proxy.mapToSource(index))
         return ""
 
     def navigate_to_previous_folder(self):
@@ -117,16 +162,20 @@ class DirectoryTree(QTreeView):
 
         # Try to select the previous sibling
         prev_row = current_row - 1
-        if prev_row >= 0 and prev_row < self._file_system_model.rowCount(parent_index):
-            prev_index = self._file_system_model.index(prev_row, 0, parent_index)
+        model_parent_index = self._proxy.mapToSource(parent_index)
+        if prev_row >= 0 and prev_row < self._file_system_model.rowCount(
+            model_parent_index
+        ):
+            prev_index = self._file_system_model.index(prev_row, 0, model_parent_index)
 
             # If it's a directory, select it
             if self._file_system_model.isDir(prev_index):
-                self.setCurrentIndex(prev_index)
-                self.scrollTo(prev_index)
+                proxy_prev_index = self._proxy.mapFromSource(prev_index)
+                self.setCurrentIndex(proxy_prev_index)
+                self.scrollTo(proxy_prev_index)
                 # Fire the clicked signal
-                self.clicked.emit(prev_index)
-                return prev_index
+                self.clicked.emit(proxy_prev_index)
+                return proxy_prev_index
 
         # If we're at the start of the current level, try to go to parent's previous sibling
         # or recursively check parent levels
@@ -155,13 +204,14 @@ class DirectoryTree(QTreeView):
             return None
 
         # Try to find previous folder
-        prev_folder = find_previous_folder(parent_index)
+        prev_folder = find_previous_folder(model_parent_index)
         if prev_folder and prev_folder.isValid():
-            self.setCurrentIndex(prev_folder)
-            self.scrollTo(prev_folder)
+            proxy_prev_index = self._proxy.mapFromSource(prev_folder)
+            self.setCurrentIndex(proxy_prev_index)
+            self.scrollTo(proxy_prev_index)
             # Fire the clicked signal
-            self.clicked.emit(prev_folder)
-            return prev_folder
+            self.clicked.emit(proxy_prev_index)
+            return proxy_prev_index
 
         return None
 
@@ -196,16 +246,18 @@ class DirectoryTree(QTreeView):
 
         # Try to select the next sibling
         next_row = current_row + 1
-        if next_row < self._file_system_model.rowCount(parent_index):
-            next_index = self._file_system_model.index(next_row, 0, parent_index)
+        model_parent_index = self._proxy.mapToSource(parent_index)
+        if next_row < self._file_system_model.rowCount(model_parent_index):
+            next_index = self._file_system_model.index(next_row, 0, model_parent_index)
 
             # If it's a directory, select it
             if self._file_system_model.isDir(next_index):
-                self.setCurrentIndex(next_index)
-                self.scrollTo(next_index)
+                proxy_next_index = self._proxy.mapFromSource(next_index)
+                self.setCurrentIndex(proxy_next_index)
+                self.scrollTo(proxy_next_index)
                 # Fire the clicked signal
-                self.clicked.emit(next_index)
-                return next_index
+                self.clicked.emit(proxy_next_index)
+                return proxy_next_index
 
         # If we're at the end of the current level, try to go to parent's next sibling
         # or recursively check parent levels
@@ -231,13 +283,14 @@ class DirectoryTree(QTreeView):
             return None
 
         # Try to find next folder
-        next_folder = find_next_folder(parent_index)
-        if next_folder and next_folder.isValid():
-            self.setCurrentIndex(next_folder)
-            self.scrollTo(next_folder)
+        next_index = find_next_folder(model_parent_index)
+        if next_index and next_index.isValid():
+            proxy_next_index = self._proxy.mapFromSource(next_index)
+            self.setCurrentIndex(proxy_next_index)
+            self.scrollTo(proxy_next_index)
             # Fire the clicked signal
-            self.clicked.emit(next_folder)
-            return next_folder
+            self.clicked.emit(proxy_next_index)
+            return proxy_next_index
 
         return None
 
