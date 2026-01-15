@@ -1,4 +1,9 @@
-"""Metadata viewer widget for displaying image and video metadata."""
+"""Metadata viewer widget for displaying image and video metadata.
+
+This module provides a widget for displaying structured metadata from
+images (EXIF, IPTC) and videos, with support for JSON formatting and
+sidecar metadata files.
+"""
 
 import json
 import os
@@ -8,11 +13,30 @@ from PIL.ExifTags import TAGS
 from PySide6.QtWidgets import QTextEdit
 from tinytag import TinyTag
 
+from utils import (
+    get_swarm_json_path,
+    is_video_file,
+)
+
 
 class MetadataViewer(QTextEdit):
-    """A widget for displaying metadata information."""
+    """A widget for displaying structured metadata information.
+
+    Features include:
+    - Display of EXIF data from images (using PIL)
+    - Display of metadata from videos (using tinytag)
+    - Support for sidecar JSON files (e.g., SwarmUI .swarm.json files)
+    - Formatted JSON output with indentation
+    - Error handling for corrupted or missing metadata
+    - Automatic detection of image vs video files
+    """
 
     def __init__(self, parent=None):
+        """Initialize the MetadataViewer widget.
+
+        Args:
+            parent: Parent widget (optional).
+        """
         super().__init__(parent)
         self.setReadOnly(True)
         self.setPlaceholderText("JSON Metadata will appear here...")
@@ -35,6 +59,9 @@ class MetadataViewer(QTextEdit):
     def loadFileMetadata(self, file_path):
         """Load and display metadata from an image or video file.
 
+        This method automatically detects whether the file is an image or video
+        and delegates to the appropriate handler method.
+
         Args:
             file_path (str): Path to the image or video file.
         """
@@ -43,9 +70,7 @@ class MetadataViewer(QTextEdit):
             return
 
         # Check file extension to determine handler
-        file_ext = os.path.splitext(file_path)[1].lower()
-
-        if file_ext in [".mp4", ".mov", ".avi", ".mkv", ".flv"]:
+        if is_video_file(file_path):
             self.loadVideoMetadata(file_path)
         else:
             self.loadImageMetadata(file_path)
@@ -109,7 +134,7 @@ class MetadataViewer(QTextEdit):
         metadata["Path"] = video_path
 
         # look for .swarm.json file
-        swarm_json_path = os.path.splitext(video_path)[0] + ".swarm.json"
+        swarm_json_path = get_swarm_json_path(video_path)
         if os.path.exists(swarm_json_path):
             try:
                 with open(swarm_json_path, "r", encoding="utf-8") as f:

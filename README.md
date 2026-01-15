@@ -2,7 +2,19 @@
 
 ## Introduction
 
-Bowser is a desktop application for browsing, viewing, and managing image and video files typically from AI sources. Built with PySide6 (Qt for Python), Bowser provides a user-friendly interface with a dark mode theme for comfortable viewing. It has specific code to handle sidecar files and json metadata files produced by SwarmUI. Mainly done as a vibe coding exercise for funzies using Devstral2 24B small Q6 running locally with a 48K context under llamacpp.
+Bowser is a desktop application for browsing, viewing, and managing image and video files, with special support for AI-generated content and SwarmUI metadata. Built with PySide6 (Qt for Python), Bowser provides a user-friendly interface with a dark mode theme for comfortable viewing.
+
+### Key Features
+
+- **Multi-panel interface**: Directory tree, thumbnail gallery, image/video viewer, and metadata display
+- **Image support**: JPG, JPEG, PNG, BMP, GIF, TIFF, WEBP
+- **Video support**: MP4, MOV, AVI, MKV, FLV with frame-by-frame navigation
+- **Dark mode**: Built-in dark theme for reduced eye strain
+- **File management**: Mark and delete files, prune empty directories
+- **Metadata viewing**: Display JSON metadata for files, including SwarmUI sidecar files
+- **Keyboard navigation**: Efficient keyboard shortcuts for navigation
+- **Parallel loading**: Fast thumbnail generation using multiprocessing
+- **Frame capture**: Save individual video frames as PNG images
 
 ### Features
 
@@ -91,20 +103,50 @@ Bowser automatically applies a dark theme for comfortable viewing in low-light c
 
 ## Development
 
+### Architecture
+
 Bowser is built with:
 - **PySide6**: Qt bindings for Python
 - **Qt Multimedia**: For video playback
 - **Python 3.7+**: Core language
+- **Pillow (PIL)**: For image processing and EXIF metadata
+- **tinytag**: For video metadata extraction
+- **multiprocessing**: For parallel thumbnail generation
 
-The codebase is organized into modules:
-- `main.py`: Entry point and application setup
-- `bowsermain.py`: Main window and UI management
-- `directorytree.py`: Directory browsing widget
-- `imagegallery.py`: Thumbnail gallery widget
-- `imageviewer.py`: Image display widget
-- `videoviewer.py`: Video playback widget
-- `metadataviewer.py`: Metadata display widget
+### Code Organization
+
+The codebase is organized into modular components:
+
+- **`main.py`**: Entry point and application setup
+- **`bowsermain.py`**: Main window and UI management, including menu bar and keybindings
+- **`directorytree.py`**: Directory browsing widget with navigation capabilities
+- **`imagegallery.py`**: Thumbnail gallery widget with drag-and-drop support
+- **`imageviewer.py`**: Image display widget with zoom and pan capabilities
+- **`videoviewer.py`**: Video playback widget with frame-by-frame navigation
+- **`metadataviewer.py`**: Metadata display widget for EXIF and JSON metadata
+
+### Key Implementation Details
+
+1. **Parallel Thumbnail Loading**: Uses multiprocessing to load thumbnails in parallel for improved performance
+2. **Dark Mode**: Custom dark palette applied to all widgets for comfortable viewing
+3. **File Marking System**: Allows marking multiple files for batch deletion
+4. **SwarmUI Support**: Special handling for `.swarm.json` and `.swarmpreview.jpg` sidecar files
+5. **Frame Capture**: Video frame capture with automatic naming based on frame number
+
+## Contributing
+
+Contributions are welcome! Please follow these guidelines:
+
+1. **Code Style**: Follow PEP 8 guidelines and maintain consistent style with existing code
+2. **Type Hints**: Add type hints to all public functions and methods
+3. **Documentation**: Keep docstrings updated and add comments for complex logic
+4. **Testing**: Test changes across different file types and edge cases
 
 ## License
 
 This project is open source. See the LICENSE file for details.
+
+## Acknowledgments
+
+- Thanks to the PySide6 and Qt communities for excellent documentation and support
+- Special thanks to the developers of Pillow, tinytag, and other dependencies

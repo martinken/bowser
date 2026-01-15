@@ -1,8 +1,20 @@
-"""Video viewer widget for playing MP4 and MOV videos."""
+"""Video viewer widget for playing and manipulating video files.
+
+This module provides a comprehensive video player with frame-by-frame
+navigation, frame capture, and metadata display capabilities.
+"""
 
 import os
 
 from PySide6.QtCore import QUrl
+
+from utils import (
+    DEFAULT_FRAME_RATE,
+    DEFAULT_VOLUME,
+    SUPPORTED_VIDEO_EXTENSIONS,
+    get_frame_filename,
+    get_swarm_json_path,
+)
 from PySide6.QtMultimedia import QAudioOutput, QMediaMetaData, QMediaPlayer, QVideoSink
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
@@ -16,9 +28,24 @@ from PySide6.QtWidgets import (
 
 
 class VideoViewer(QWidget):
-    """A widget for displaying and playing video files."""
+    """A widget for displaying and playing video files with advanced controls.
+    
+    Features include:
+    - Playback controls (play, pause, stop)
+    - Frame-by-frame navigation (-1, +1 buttons)
+    - Frame capture to PNG (Capture Frame button)
+    - Video metadata display (title, duration, frame rate)
+    - Infinite looping (enabled by default)
+    - Status information with frame counts and timestamps
+    - Audio output with volume control
+    """
 
     def __init__(self, parent=None):
+        """Initialize the VideoViewer widget.
+        
+        Args:
+            parent: Parent widget (optional).
+        """
         super().__init__(parent)
         self.setWindowTitle("Video Viewer")
 
@@ -83,16 +110,25 @@ class VideoViewer(QWidget):
 
     def loadVideo(self, video_path):
         """Load and prepare a video file for playback.
-
+        
+        This method:
+        1. Validates the file exists
+        2. Checks the file extension is supported
+        3. Stops any currently playing video
+        4. Sets the media source for playback
+        
         Args:
             video_path (str): Path to the video file (MP4, MOV, etc.).
+            
+        Returns:
+            bool: True if the video was loaded successfully, False otherwise.
         """
         if not os.path.exists(video_path):
             self.statusLabel.setText(f"Error: File not found - {video_path}")
             return False
 
         file_ext = os.path.splitext(video_path)[1].lower()
-        if file_ext not in [".mp4", ".mov", ".avi", ".mkv", ".flv"]:
+        if file_ext not in SUPPORTED_VIDEO_EXTENSIONS:
             self.statusLabel.setText(f"Error: Unsupported format - {file_ext}")
             return False
 
@@ -214,9 +250,9 @@ class VideoViewer(QWidget):
         # Try to get frame rate from metadata
         fps = self.mediaPlayer.metaData().value(QMediaMetaData.Key.VideoFrameRate)
         if isinstance(fps, float):
-            fps = float(fps) if fps is not None else 30
+            fps = float(fps) if fps is not None else DEFAULT_FRAME_RATE
             return fps
-        return 30.0
+        return DEFAULT_FRAME_RATE
 
     def handleDurationChanged(self, duration):
         """Handle duration changes when media is loaded.
@@ -277,12 +313,9 @@ class VideoViewer(QWidget):
             # Save the frame as PNG
             # Generate a filename based on the video source and current frame number
             video_path = self.mediaPlayer.source().toLocalFile()
-            base_name = os.path.splitext(os.path.basename(video_path))[0]
-
-            # Get the current frame number
             fps = self.getFrameRate()
             current_frame = int((self.mediaPlayer.position() / 1000.0) * fps)
-            frame_filename = f"{base_name}_frame_{current_frame:06d}.png"
+            frame_filename = get_frame_filename(video_path, current_frame)
 
             # Save the image
             if image.save(frame_filename):

@@ -1,4 +1,8 @@
-"""Image gallery widget for displaying thumbnails of images in a folder."""
+"""Image gallery widget for displaying thumbnails of images and videos.
+
+This module provides a thumbnail gallery that supports parallel loading,
+drag-and-drop operations, and keyboard navigation for efficient browsing.
+"""
 
 import multiprocessing
 import os
@@ -23,6 +27,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from utils import (
+    ALL_SUPPORTED_EXTENSIONS,
+    MAX_PROCESSES,
+    PROCESSING_CHUNK_SIZE,
+    get_swarm_preview_path,
+    is_video_file,
+)
+
 
 class DragLabel(QLabel):
     """A custom QLabel that supports drag and drop operations."""
@@ -45,13 +57,8 @@ class DragLabel(QLabel):
         self._update_border()
 
     def set_image_path(self, image_path):
-        video_extensions = [".mp4", ".mov"]
-        # set _is_video if the file is a video (mp4 or mov)
-        file_ext = os.path.splitext(image_path)[1].lower()
-        if file_ext in video_extensions:
-            self._is_video = True
-        else:
-            self._is_video = False
+        # set _is_video if the file is a video
+        self._is_video = is_video_file(image_path)
         self._image_path = image_path
         self._update_border()
 
@@ -130,7 +137,7 @@ def load_image_worker(image_path, thumbnail_size, index):
         # Load the image
         thumbnail_path = image_path
         # if there is a swarmpreview for the file then use it for the pixmap
-        swarm_preview_path = os.path.splitext(image_path)[0] + ".swarmpreview.jpg"
+        swarm_preview_path = get_swarm_preview_path(image_path)
         if os.path.exists(swarm_preview_path):
             thumbnail_path = swarm_preview_path
 
@@ -147,12 +154,26 @@ def load_image_worker(image_path, thumbnail_size, index):
 
 
 class ImageGallery(QWidget):
-    """A widget that displays thumbnails of images in a folder."""
+    """A widget that displays thumbnails of images and videos in a folder.
+
+    Features:
+    - Parallel thumbnail loading using multiprocessing
+    - Dynamic grid layout that adjusts to window size
+    - Drag-and-drop support for thumbnails
+    - Visual highlighting of selected and marked files
+    - Keyboard navigation support
+    - Support for both images and videos with distinct coloring
+    """
 
     # Signal emitted when a thumbnail is clicked
     thumbnailClicked = Signal(str)
 
     def __init__(self, parent=None):
+        """Initialize the ImageGallery widget.
+
+        Args:
+            parent: Parent widget (optional).
+        """
         super().__init__(parent)
         self._thread = None
         self._request_load_cancel = False
@@ -195,28 +216,25 @@ class ImageGallery(QWidget):
         main_layout.addWidget(self._scroll_area)
 
     def load_images_from_folder(self, folder_path):
-        """Load and display images from the specified folder.
+        """Load and display images and videos from the specified folder.
+
+        This method:
+        1. Scans the folder for supported image and video files
+        2. Excludes Swarm preview files (.swarmpreview.jpg)
+        3. Creates thumbnail widgets for each file
+        4. Loads thumbnails in parallel using multiprocessing
+        5. Selects the first thumbnail by default
 
         Args:
-            folder_path (str): Path to the folder containing images.
+            folder_path (str): Path to the folder containing images and videos.
         """
         self._image_paths = []
 
         # Clear existing thumbnails
         self._clear_thumbnails()
 
-        # Get all image files from the folder
-        supported_extensions = [
-            ".jpg",
-            ".jpeg",
-            ".png",
-            ".bmp",
-            ".gif",
-            ".tiff",
-            ".webp",
-            ".mp4",
-            ".mov",
-        ]
+        # Get all supported files from the folder
+        supported_extensions = ALL_SUPPORTED_EXTENSIONS
 
         for file_name in os.listdir(folder_path):
             # exclude .swarmpreview images
@@ -295,12 +313,11 @@ class ImageGallery(QWidget):
         image_paths = self._image_paths
 
         # Initialize process pool if not already done
-        # Use a reasonable number of processes (typically CPU count)
-        num_processes = min(4, multiprocessing.cpu_count() or 1)
+        num_processes = min(MAX_PROCESSES, multiprocessing.cpu_count() or 1)
         process_pool = Pool(processes=num_processes)
 
-        # process tasks in chunks of up to 16
-        chunk_size = 16
+        # process tasks in chunks
+        chunk_size = PROCESSING_CHUNK_SIZE
         for i in range(0, len(image_paths), chunk_size):
             if not self._request_load_cancel:
                 chunk = image_paths[i : i + chunk_size]
@@ -356,6 +373,7 @@ class ImageGallery(QWidget):
             col = i % columns
             self._content_layout.removeWidget(self._thumbnail_widgets[i])
             self._content_layout.addWidget(self._thumbnail_widgets[i], row, col)
+            self._thumbnail_widgets[i].show()
 
     def _create_thumbnail_widget(self, index):
         """Create a widget for displaying a thumbnail.
@@ -420,7 +438,7 @@ class ImageGallery(QWidget):
         # This handles all the coordinate calculations automatically
         self._scroll_area.ensureWidgetVisible(thumbnail_widget, 0, 0)
 
-    def nextThumbnail(self):
+    def next_thumbnail(self):
         """Navigate to the next thumbnail in the gallery.
 
         Returns:
@@ -441,7 +459,7 @@ class ImageGallery(QWidget):
 
         return False
 
-    def previousThumbnail(self):
+    def previous_thumbnail(self):
         """Navigate to the previous thumbnail in the gallery.
 
         Returns:
@@ -468,7 +486,7 @@ class ImageGallery(QWidget):
             item = self._content_layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
-                self._content_layout.removeWidget(widget)
+                widget.hide()
 
     def resizeEvent(self, event):
         """Handle resize events to adjust the thumbnail layout.
