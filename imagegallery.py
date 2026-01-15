@@ -1,6 +1,9 @@
 """Image gallery widget for displaying thumbnails of images in a folder."""
 
+import multiprocessing
 import os
+import threading
+from multiprocessing import Pool
 
 from PySide6.QtCore import (
     QMimeData,
@@ -26,20 +29,20 @@ class DragLabel(QLabel):
 
     def __init__(self, index, parent=None):
         super().__init__(parent)
-        self.index = index
+        self._index = index
         self.setAcceptDrops(True)
-        self.isVideo = False
-        self.isMarked = False
-        self.isHighlighted = False
-        self.updateBorder()
+        self._is_video = False
+        self._marked = False
+        self._highlighted = False
+        self._update_border()
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         # Make thumbnail clickable
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
-    def setHighlighted(self, value):
-        self.isHighlighted = value
-        self.updateBorder()
+    def set_highlighted(self, value):
+        self._highlighted = value
+        self._update_border()
 
     def set_image_path(self, image_path):
         video_extensions = [".mp4", ".mov"]
@@ -48,56 +51,36 @@ class DragLabel(QLabel):
         if file_ext in video_extensions:
             self._is_video = True
         else:
-            self._is_video = True
-        self.image_path = image_path
-        self.updateBorder()
+            self._is_video = False
+        self._image_path = image_path
+        self._update_border()
 
-    def load_image(self):
-        # Load and display thumbnail
-        thumbnail_path = self.image_path
-        # if there is a swarmpreview for the file then use it for the pixmap
-        swarm_preview_path = os.path.splitext(self.image_path)[0] + ".swarmpreview.jpg"
-        if os.path.exists(swarm_preview_path):
-            thumbnail_path = swarm_preview_path
-        pixmap = QPixmap(thumbnail_path)
-        if not pixmap.isNull():
-            # Scale pixmap to thumbnail size while maintaining aspect ratio
-            scaled_pixmap = pixmap.scaled(
-                self.maximumSize(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-            self.setPixmap(scaled_pixmap)
-        else:
-            self.setText("Image")
-            self.setStyleSheet("color: gray;")
-
-    def updateBorder(self):
-        if self.isMarked:
+    def _update_border(self):
+        if self._marked:
             # Add a red checkmark overlay or change background
             self.setStyleSheet(
                 "border: 2px solid #FF0000; background: rgba(255, 0, 0, 30);"
             )
             return
-        if self.isHighlighted:
-            if self.isVideo:
+        if self._highlighted:
+            if self._is_video:
                 self.setStyleSheet("border: 2px solid #C0A0FF;")
             else:
                 self.setStyleSheet("border: 2px solid #C0FFA0;")
         else:
-            if self.isVideo:
+            if self._is_video:
                 self.setStyleSheet("border: 2px solid #603080;")
             else:
                 self.setStyleSheet("border: 2px solid #608030;")
 
-    def setMarked(self, value):
+    def set_marked(self, value):
         """Mark or unmark the thumbnail.
 
         Args:
             value (bool): True to mark the thumbnail, False to unmark it.
         """
-        self.isMarked = value
-        self.updateBorder()
+        self._marked = value
+        self._update_border()
 
     def mouseMoveEvent(self, event):
         """Handle mouse move events to initiate drag operations."""
@@ -115,7 +98,7 @@ class DragLabel(QLabel):
 
         # Create mime data with the file path
         mime_data = QMimeData()
-        url = QUrl.fromLocalFile(self.image_path)
+        url = QUrl.fromLocalFile(self._image_path)
         mime_data.setUrls([url])
         drag.setMimeData(mime_data)
 
@@ -131,6 +114,38 @@ class DragLabel(QLabel):
         super().mousePressEvent(event)
 
 
+def load_image_worker(image_path, thumbnail_size, index):
+    """Worker function for loading images in a separate process.
+
+    Args:
+        image_path (str): Path to the image file
+        thumbnail_size (tuple): Size of the thumbnail (width, height)
+
+    Returns:
+        tuple: (image_path, pixmap_data, size) where pixmap_data is PIL.Image or None
+    """
+    try:
+        from PIL import Image
+
+        # Load the image
+        thumbnail_path = image_path
+        # if there is a swarmpreview for the file then use it for the pixmap
+        swarm_preview_path = os.path.splitext(image_path)[0] + ".swarmpreview.jpg"
+        if os.path.exists(swarm_preview_path):
+            thumbnail_path = swarm_preview_path
+
+        image = Image.open(thumbnail_path)
+
+        if image:
+            image.thumbnail(thumbnail_size, Image.Resampling.LANCZOS)
+            return (image_path, image.convert("RGB"), image.size, index)
+        else:
+            return (image_path, None, index)
+    except Exception as e:
+        print(f"Error loading image {image_path}: {e}")
+        return (image_path, None, [0, 0], index)
+
+
 class ImageGallery(QWidget):
     """A widget that displays thumbnails of images in a folder."""
 
@@ -139,12 +154,15 @@ class ImageGallery(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._thread = None
+        self._request_load_cancel = False
         self._thumbnail_widgets = []
         self._image_paths = []
         self._current_columns = -1
         self._last_thumbnail_clicked_index = 0
         self._thumbnail_size = QSize(192, 192)
-
+        self.setStyleSheet("color: gray;")
+        self._process_pool = None
         self._setup_ui()
 
     def _setup_ui(self):
@@ -216,6 +234,13 @@ class ImageGallery(QWidget):
             self._build_thumbnails()
             self._display_thumbnails()
             self._on_thumbnail_clicked(0)
+            # Load thumbnails in parallel using multiprocessing
+            if self._thread:
+                self._request_load_cancel = True
+                self._thread.join()
+                self._request_load_cancel = False
+            self._thread = threading.Thread(target=self._load_thumbnails_in_parallel)
+            self._thread.start()
 
     def _get_target_number_of_columns(self):
         # Calculate grid layout based on available width
@@ -250,11 +275,73 @@ class ImageGallery(QWidget):
             return
 
         for i, image_path in enumerate(self._image_paths):
-            # Create thumbnail widget
-            self._thumbnail_widgets[i].setHighlighted(False)
-            self._thumbnail_widgets[i].setMinimumSize(self._thumbnail_size)
-            self._thumbnail_widgets[i].setMaximumSize(self._thumbnail_size)
-            self._thumbnail_widgets[i].setImagePath(image_path)
+            # build/reset thumbnail widget
+            self._thumbnail_widgets[i].set_highlighted(False)
+            self._thumbnail_widgets[i].set_marked(False)
+            self._thumbnail_widgets[i].setFixedSize(self._thumbnail_size)
+            # self._thumbnail_widgets[i].setMinimumSize(self._thumbnail_size)
+            # self._thumbnail_widgets[i].setMaximumSize(self._thumbnail_size)
+            # Set placeholder text while loading
+            self._thumbnail_widgets[i].setText("Loading...")
+            self._thumbnail_widgets[i].set_image_path(image_path)
+
+    def _load_thumbnails_in_parallel(self):
+        """Load thumbnails in parallel using multiprocessing."""
+        if not self._image_paths:
+            return
+
+        # Prepare arguments for the worker function
+        thumbnail_size = (self._thumbnail_size.width(), self._thumbnail_size.height())
+        image_paths = self._image_paths
+
+        # Initialize process pool if not already done
+        # Use a reasonable number of processes (typically CPU count)
+        num_processes = min(4, multiprocessing.cpu_count() or 1)
+        process_pool = Pool(processes=num_processes)
+
+        # process tasks in chunks of up to 16
+        chunk_size = 16
+        for i in range(0, len(image_paths), chunk_size):
+            if not self._request_load_cancel:
+                chunk = image_paths[i : i + chunk_size]
+                # Submit tasks to the process pool
+                results = []
+                for j, image_path in enumerate(chunk):
+                    result = process_pool.apply_async(
+                        load_image_worker, args=(image_path, thumbnail_size, i + j)
+                    )
+                    results.append(result)
+
+                # Process results as they become available
+                for result in results:
+                    try:
+                        image_path, resized_image, size, index = result.get()
+                        if resized_image is not None:
+                            # Convert PIL Image to QPixmap in the main thread
+                            from PySide6.QtGui import QImage, QPixmap
+
+                            image = QImage(
+                                resized_image.tobytes(),
+                                size[0],
+                                size[1],
+                                size[0] * 3,
+                                QImage.Format.Format_RGB888,
+                            )
+                            pixmap = QPixmap.fromImage(image)
+
+                            # Update the thumbnail widget
+                            self._thumbnail_widgets[index].setPixmap(pixmap)
+                        else:
+                            self._thumbnail_widgets[index].setText("Image")
+                    except Exception as e:
+                        print(
+                            f"Error processing result for {self._image_paths[i]}: {e}"
+                        )
+                        self._thumbnail_widgets[i].setText("Error")
+
+        # cleanup
+        process_pool.close()
+        process_pool.join()
 
     def _display_thumbnails(self):
         """Display thumbnails for all loaded images."""
@@ -267,9 +354,8 @@ class ImageGallery(QWidget):
         for i, image_path in enumerate(self._image_paths):
             row = i // columns
             col = i % columns
+            self._content_layout.removeWidget(self._thumbnail_widgets[i])
             self._content_layout.addWidget(self._thumbnail_widgets[i], row, col)
-            self._thumbnail_widgets[i].show()
-            # TODO: call load_image() in a QRunnable
 
     def _create_thumbnail_widget(self, index):
         """Create a widget for displaying a thumbnail.
@@ -301,11 +387,13 @@ class ImageGallery(QWidget):
         Args:
             image_path (str): Path to the clicked image file.
         """
-        self._thumbnail_widgets[self._last_thumbnail_clicked_index].setHighlighted(
+        self._thumbnail_widgets[self._last_thumbnail_clicked_index].set_highlighted(
             False
         )
         self._last_thumbnail_clicked_index = index
-        self._thumbnail_widgets[self._last_thumbnail_clicked_index].setHighlighted(True)
+        self._thumbnail_widgets[self._last_thumbnail_clicked_index].set_highlighted(
+            True
+        )
 
         # Scroll to make the selected thumbnail visible
         self._scroll_to_thumbnail(index)
@@ -380,7 +468,7 @@ class ImageGallery(QWidget):
             item = self._content_layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
-                widget.hide()
+                self._content_layout.removeWidget(widget)
 
     def resizeEvent(self, event):
         """Handle resize events to adjust the thumbnail layout.
@@ -426,7 +514,7 @@ class ImageGallery(QWidget):
         # Get the thumbnail widget for the current file
         thumbnail_widget = self._thumbnail_widgets[self._last_thumbnail_clicked_index]
         # set the mark to value
-        thumbnail_widget.setMarked(value)
+        thumbnail_widget.set_marked(value)
         return True
 
     def set_thumbnail_size(self, size):
@@ -438,4 +526,9 @@ class ImageGallery(QWidget):
         self._thumbnail_size = size
         # Reload thumbnails with new size
         if self._image_paths:
+            # Clear existing process pool before reloading
+            if self._process_pool is not None:
+                self._process_pool.close()
+                self._process_pool.join()
+                self._process_pool = None
             self.load_images_from_folder(os.path.dirname(self._image_paths[0]))
