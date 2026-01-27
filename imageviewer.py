@@ -4,6 +4,10 @@ This module provides a zoomable, pannable image viewer with support for
 fit-to-window and 1:1 scaling, as well as mouse-based navigation.
 """
 
+import os
+
+os.environ["QT_LOGGING_RULES"] = "*.debug=false;qt.multimedia.*=false"
+
 from PySide6.QtCore import QPointF, Qt, Slot
 from PySide6.QtGui import (
     QPainter,
@@ -22,7 +26,7 @@ from PySide6.QtWidgets import (
 
 class ImageViewer(QWidget):
     """A widget for displaying and manipulating images with zoom and pan capabilities.
-    
+
     Features include:
     - Fit-to-window scaling (normalSize method)
     - 1:1 scale viewing (fullSize method)
@@ -31,10 +35,10 @@ class ImageViewer(QWidget):
     - Smooth rendering with anti-aliasing
     - Large scene area to handle very high resolution images
     """
-    
+
     def __init__(self, parent=None):
         """Initialize the ImageViewer widget.
-        
+
         Args:
             parent: Parent widget (optional).
         """
@@ -69,7 +73,7 @@ class ImageViewer(QWidget):
 
     def setImage(self, new_image):
         """Load and display an image.
-        
+
         Args:
             new_image (str): Path to the image file to load.
         """

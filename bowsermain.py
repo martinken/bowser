@@ -250,7 +250,7 @@ class BowserMain(QMainWindow):
 
         # Set initial sizes for the splitter
         # Third column (image/video viewer) gets extra space with stretch factor
-        self._main_splitter.setSizes([200, 420, 600, 300])
+        self._main_splitter.setSizes([200, 420, 600, 400])
         self._main_splitter.setStretchFactor(0, 0)  # tree - no stretch
         self._main_splitter.setStretchFactor(1, 0)  # Gallery - no stretch
         self._main_splitter.setStretchFactor(2, 1)  # Viewer - gets extra space
@@ -328,7 +328,7 @@ class BowserMain(QMainWindow):
     def _prune_empty_directories_action(self):
         """Handle Prune Empty Directories menu action."""
         # Get the current root folder from the file system model
-        root_path = self._directory_tree.get_file_system_model().rootPath()
+        root_path = self._directory_tree.get_root_folder()
 
         if not root_path or not os.path.isdir(root_path):
             QMessageBox.warning(
@@ -425,7 +425,7 @@ class BowserMain(QMainWindow):
             file_path (str): Path to the clicked file (image or video).
         """
         # Load and display file metadata
-        self._metadata_display.loadFileMetadata(file_path)
+        self._metadata_display.load_file_metadata(file_path)
 
         # Check file extension to determine if it's an image or video
         if is_video_file(file_path):
@@ -579,8 +579,8 @@ class BowserMain(QMainWindow):
         Supported keybindings:
         - W: Navigate to previous folder
         - S: Navigate to next folder
-        - A or Left Arrow: Previous thumbnail
-        - D or Right Arrow: Next thumbnail
+        - A: Previous thumbnail
+        - D: Next thumbnail
         - R: Fit image to window
         - 1: Display image at 1:1 scale
         - X: Mark/unmark current file
@@ -592,9 +592,9 @@ class BowserMain(QMainWindow):
             self._directory_tree.navigate_to_previous_folder()
         elif event.key() == Qt.Key.Key_S:
             self._directory_tree.navigate_to_next_folder()
-        elif event.key() == Qt.Key.Key_A or event.key() == Qt.Key.Key_Left:
+        elif event.key() == Qt.Key.Key_A:
             self._on_previous_clicked()
-        elif event.key() == Qt.Key.Key_D or event.key() == Qt.Key.Key_Right:
+        elif event.key() == Qt.Key.Key_D:
             self._on_next_clicked()
         elif event.key() == Qt.Key.Key_R:
             self._image_viewer.normalSize()

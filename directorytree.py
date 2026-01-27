@@ -14,18 +14,18 @@ from utils import is_directory_empty
 
 class FileProxyModel(QSortFilterProxyModel):
     """Custom proxy model for filtering directory tree items.
-    
+
     This model filters out sibling directories when a specific directory
     is selected, providing a cleaner navigation experience by showing only
     the selected directory and its children.
     """
-    
+
     def setIndexPath(self, index):
         """Set the current index path for filtering.
-        
+
         This method sets the reference index for filtering and invalidates
         the filter to trigger a re-evaluation of which rows should be shown.
-        
+
         Args:
             index: The index to use as the reference point for filtering.
         """
@@ -34,15 +34,15 @@ class FileProxyModel(QSortFilterProxyModel):
 
     def filterAcceptsRow(self, sourceRow, sourceParent):
         """Filter rows to show only the selected directory and its children.
-        
+
         This method implements the filtering logic to hide sibling directories
         at the same level as the selected directory, creating a focused view
         of the directory hierarchy.
-        
+
         Args:
             sourceRow: The row index in the source model.
             sourceParent: The parent index in the source model.
-            
+
         Returns:
             bool: True if the row should be shown, False otherwise.
         """
@@ -91,7 +91,7 @@ class DirectoryTree(QTreeView):
         # Set column width for the name column
         self.setColumnWidth(0, 80)
 
-    def get_file_system_model(self) -> 'QFileSystemModel':
+    def get_file_system_model(self) -> "QFileSystemModel":
         """Get the file system model.
 
         Returns:
@@ -99,12 +99,17 @@ class DirectoryTree(QTreeView):
         """
         return self._file_system_model
 
+    def get_root_folder(self):
+        return self._root_folder
+
     def open_root_folder(self, folder_path: str) -> None:
         """Open a folder from a given path.
 
         Args:
             folder_path (str): Path to the folder to open.
         """
+        self._root_folder = folder_path
+
         # Check if the path is a valid directory
         if os.path.isdir(folder_path):
             parent_dir = os.path.abspath(os.path.join(folder_path, os.pardir))
@@ -160,7 +165,7 @@ class DirectoryTree(QTreeView):
 
         Args:
             index: The model index to get the path for.
-            
+
         Returns:
             str: Path to the selected folder, or empty string if none selected.
         """
@@ -333,20 +338,20 @@ class DirectoryTree(QTreeView):
 
     def prune_empty_directories(self, root_folder: str) -> int:
         """Recursively remove empty directories below the root folder using depth-first approach.
-        
+
         This method:
         1. Processes subdirectories first (depth-first)
         2. Checks if each directory is empty after processing its children
         3. Removes Swarm metadata files (.ldb files) before removing directories
         4. Removes empty directories
         5. Returns the count of removed directories
-        
+
         Args:
             root_folder (str): Path to the root folder to start pruning from.
 
         Returns:
             int: Number of directories removed.
-        
+
         Note:
             This operation is irreversible. Use with caution.
         """
@@ -357,7 +362,7 @@ class DirectoryTree(QTreeView):
 
         def _prune_recursive(directory):
             """Recursively prune empty directories using depth-first approach.
-            
+
             This inner function implements the depth-first traversal:
             - Processes all children first
             - Then checks if the current directory is empty
