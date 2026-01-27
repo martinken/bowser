@@ -579,8 +579,8 @@ class BowserMain(QMainWindow):
         Supported keybindings:
         - W: Navigate to previous folder
         - S: Navigate to next folder
-        - A: Previous thumbnail
-        - D: Next thumbnail
+        - A or Left Arrow: Previous thumbnail
+        - D or Right Arrow: Next thumbnail
         - R: Fit image to window
         - 1: Display image at 1:1 scale
         - X: Mark/unmark current file
@@ -592,9 +592,9 @@ class BowserMain(QMainWindow):
             self._directory_tree.navigate_to_previous_folder()
         elif event.key() == Qt.Key.Key_S:
             self._directory_tree.navigate_to_next_folder()
-        elif event.key() == Qt.Key.Key_A:
+        elif event.key() == Qt.Key.Key_A or event.key() == Qt.Key.Key_Left:
             self._on_previous_clicked()
-        elif event.key() == Qt.Key.Key_D:
+        elif event.key() == Qt.Key.Key_D or event.key() == Qt.Key.Key_Right:
             self._on_next_clicked()
         elif event.key() == Qt.Key.Key_R:
             self._image_viewer.normalSize()

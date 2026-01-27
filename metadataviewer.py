@@ -49,9 +49,25 @@ class MetadataViewer(QTextEdit):
             metadata (str or dict): The metadata text or dictionary to display.
         """
         if isinstance(metadata, dict):
-            # Format dictionary as JSON with indentation
+            # Extract key values first
+            extracted_values = self._extract_values_from_metadata(metadata)
+
+            # Format extracted values as Key: Value pairs
+            if extracted_values:
+                extracted_text = "\n".join(
+                    f"{key}: {value}" for key, value in extracted_values.items()
+                )
+            else:
+                extracted_text = "No extracted values found"
+
+            # Format full metadata as JSON
             formatted_json = json.dumps(metadata, indent=2)
-            self.setPlainText(formatted_json)
+
+            # Combine extracted values and full metadata
+            combined_text = (
+                f"{extracted_text}\n\n=== FULL METADATA ===\n{formatted_json}"
+            )
+            self.setPlainText(combined_text)
         else:
             # Treat as string
             self.setPlainText(metadata)
@@ -156,7 +172,7 @@ class MetadataViewer(QTextEdit):
         result = self.expandMetadata(metadata)
         self.setMetadata(result)
 
-    def expandMetadata(self, data, max_length=300):
+    def expandMetadata(self, data, max_length=1000):
         if isinstance(data, dict):
             # Recursively process each item and merge the results
             result = {}
@@ -184,3 +200,54 @@ class MetadataViewer(QTextEdit):
                     value = data[:max_length] + "..."
                 return value
         return data
+
+    def _extract_values_from_metadata(self, metadata):
+        values_to_extract = [
+            "File",
+            "seed",
+            "Size",
+            "model",
+            "generation_time",
+            "prompt",
+            "original_prompt",
+            "initimage_filename",
+            "filename",
+            "variationseed",
+            "steps",
+            "frames",
+            "overlap",
+            "trimstartframes",
+            "trimendframes",
+            "myvideo_filename",
+            "Path",
+        ]
+
+        extracted_values = {}
+
+        # Traverse the metadata looking for values_to_extract
+        # when found extract them and store them as Key value pairs
+        # in extracted_values
+        self._traverse_and_extract(metadata, values_to_extract, extracted_values)
+
+        return extracted_values
+
+    def _traverse_and_extract(self, data, keys_to_find, extracted_values):
+        """Recursively traverse metadata and extract specific key-value pairs.
+
+        Args:
+            data: The metadata to traverse (can be dict, list, or primitive)
+            keys_to_find: List of keys to extract
+            extracted_values: Dictionary to store extracted key-value pairs
+        """
+        if isinstance(data, dict):
+            for key, value in data.items():
+                # Check if this key is in our list of keys to extract
+                if key in keys_to_find and key not in extracted_values:
+                    extracted_values[key] = value
+                # Recursively traverse the value
+                self._traverse_and_extract(value, keys_to_find, extracted_values)
+        elif isinstance(data, list):
+            # Traverse each item in the list
+            for item in data:
+                self._traverse_and_extract(item, keys_to_find, extracted_values)
+        # For primitive types (str, int, float, etc.), do nothing

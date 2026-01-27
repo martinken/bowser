@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QGridLayout,
     QLabel,
+    QLineEdit,
     QScrollArea,
     QSizePolicy,
     QVBoxLayout,
@@ -191,7 +192,16 @@ class ImageGallery(QWidget):
         # Main layout
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
+        main_layout.setSpacing(6)
+
+        # Filter box
+        self._filter_input = QLineEdit()
+        self._filter_input.setPlaceholderText("Filter files...")
+        self._filter_input.setStyleSheet(
+            "QLineEdit { background-color: #333; color: white; border: 1px solid #555; padding: 5px; }"
+        )
+        self._filter_input.textChanged.connect(self._on_filter_text_changed)
+        main_layout.addWidget(self._filter_input)
 
         # Scroll area for thumbnails
         self._scroll_area = QScrollArea()
@@ -251,7 +261,7 @@ class ImageGallery(QWidget):
             self._create_empty_thumbnails()
             self._build_thumbnails()
             self._display_thumbnails()
-            self._on_thumbnail_clicked(0)
+            self._show_first_visible_thumbnail()
             # Load thumbnails in parallel using multiprocessing
             if self._thread:
                 self._request_load_cancel = True
@@ -368,12 +378,25 @@ class ImageGallery(QWidget):
         columns = self._get_target_number_of_columns()
         self._current_columns = columns
 
+        filter_lower = None
+        _filter_text = self._filter_input.text()
+        if _filter_text and _filter_text.strip() != "":
+            filter_lower = _filter_text.lower()
+
+        count = 0
         for i, image_path in enumerate(self._image_paths):
-            row = i // columns
-            col = i % columns
             self._content_layout.removeWidget(self._thumbnail_widgets[i])
-            self._content_layout.addWidget(self._thumbnail_widgets[i], row, col)
-            self._thumbnail_widgets[i].show()
+            if (
+                filter_lower is None
+                or filter_lower in os.path.basename(image_path).lower()
+            ):
+                row = count // columns
+                col = count % columns
+                self._content_layout.addWidget(self._thumbnail_widgets[i], row, col)
+                self._thumbnail_widgets[i].show()
+                count += 1
+            else:
+                self._thumbnail_widgets[i].hide()
 
     def _create_thumbnail_widget(self, index):
         """Create a widget for displaying a thumbnail.
@@ -398,6 +421,33 @@ class ImageGallery(QWidget):
 
         thumbnail_label.mousePressEvent = handle_mouse_press
         return thumbnail_label
+
+    def _on_filter_text_changed(self, text):
+        """Handle filter text changed event.
+
+        Args:
+            text (str): The filter text entered by the user.
+        """
+        # Apply filtering to the image paths
+        self._display_thumbnails()
+
+    def _show_first_visible_thumbnail(self):
+        if not self._image_paths:
+            return False
+
+        # Move to next shown thumbnail, no wrapping
+        new_index = 0
+        while (
+            new_index < len(self._image_paths)
+            and self._thumbnail_widgets[new_index].isHidden()
+        ):
+            new_index += 1
+
+        # Only select is we found at least one visible thumbnail
+        if new_index < len(self._image_paths):
+            self._on_thumbnail_clicked(new_index)
+            return True
+        return False
 
     def _on_thumbnail_clicked(self, index):
         """Handle thumbnail click event.
@@ -447,13 +497,19 @@ class ImageGallery(QWidget):
         if not self._image_paths:
             return False
 
-        # Move to next thumbnail, no wrapping
-        new_index = min(
-            self._last_thumbnail_clicked_index + 1, len(self._image_paths) - 1
-        )
+        # Move to next shown thumbnail, no wrapping
+        new_index = self._last_thumbnail_clicked_index + 1
+        while (
+            new_index < len(self._image_paths)
+            and self._thumbnail_widgets[new_index].isHidden()
+        ):
+            new_index += 1
 
         # Only emit signal if index changed
-        if new_index != self._last_thumbnail_clicked_index:
+        if (
+            new_index < len(self._image_paths)
+            and new_index != self._last_thumbnail_clicked_index
+        ):
             self._on_thumbnail_clicked(new_index)
             return True
 
@@ -469,10 +525,12 @@ class ImageGallery(QWidget):
             return False
 
         # Move to previous thumbnail, no wrapping
-        new_index = max(self._last_thumbnail_clicked_index - 1, 0)
+        new_index = self._last_thumbnail_clicked_index - 1
+        while new_index >= 0 and self._thumbnail_widgets[new_index].isHidden():
+            new_index -= 1
 
         # Only emit signal if index changed
-        if new_index != self._last_thumbnail_clicked_index:
+        if new_index >= 0 and new_index != self._last_thumbnail_clicked_index:
             self._on_thumbnail_clicked(new_index)
             return True
 
