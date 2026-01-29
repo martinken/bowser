@@ -12,6 +12,7 @@ Key functionality:
 """
 
 import os
+import time
 
 # File format constants
 SUPPORTED_IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".webp"]
@@ -26,6 +27,24 @@ DEFAULT_FRAME_RATE = 30.0
 DEFAULT_VOLUME = 100
 MAX_PROCESSES = 8
 PROCESSING_CHUNK_SIZE = 24
+
+
+# return true if it is a valid int
+def check_int(s):
+    if s[0] in ("-", "+"):
+        return s[1:].isdigit()
+    return s.isdigit()
+
+
+def replace_variables_in_string(input: str) -> str:
+    now = time.localtime()
+    input = input.replace("%year%", str(now.tm_year))
+    input = input.replace("%month%", str(now.tm_mon).zfill(2))
+    input = input.replace("%day%", str(now.tm_mday).zfill(2))
+    input = input.replace("%hour%", str(now.tm_hour).zfill(2))
+    input = input.replace("%minute%", str(now.tm_min).zfill(2))
+    input = input.replace("%second%", str(now.tm_sec).zfill(2))
+    return input
 
 
 def get_file_extension(file_path: str) -> str:

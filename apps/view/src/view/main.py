@@ -30,43 +30,40 @@ from argparse import ArgumentParser, RawTextHelpFormatter
 
 from PySide6.QtWidgets import QApplication
 
-from bowsermain import BowserMain
+from .viewmain import ViewMain
 
 
 def main() -> int:
     """Main function to launch the Bowser application.
-    
+
     Parses command line arguments, initializes the Qt application,
     and creates the main window.
-    
+
     The application provides a multi-panel interface with:
     - Directory tree for folder navigation
     - Thumbnail gallery for image/video browsing
     - Image/video viewer for detailed viewing
     - Metadata display for EXIF and JSON metadata
-    
+
     Returns:
         int: Exit code from the Qt application (0 for success).
     """
     # Parse command line arguments
     arg_parser = ArgumentParser(
         description="Bowser - Image and Video Browser",
-        formatter_class=RawTextHelpFormatter
+        formatter_class=RawTextHelpFormatter,
     )
     arg_parser.add_argument(
-        "file",
-        type=str,
-        nargs="?",
-        help="Image file or folder to open initially"
+        "file", type=str, nargs="?", help="Image file or folder to open initially"
     )
     args = arg_parser.parse_args()
 
     # Initialize Qt application
     app = QApplication(sys.argv)
-    
+
     # Create main window with optional folder path
     folder_path = args.file if args.file else None
-    main_window = BowserMain(folder_path=folder_path)
+    main_window = ViewMain(folder_path=folder_path)
 
     # Show the main window and start the application
     main_window.show()

@@ -1,5 +1,8 @@
 import os
 
+from core.imagegallery import ImageGallery
+from core.imagevideoviewer import ImageVideoViewer
+from core.metadataviewer import MetadataViewer
 from PySide6.QtCore import Qt
 from PySide6.QtGui import (
     QAction,
@@ -11,11 +14,9 @@ from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QFileDialog,
-    QHBoxLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
-    QPushButton,
     QScrollArea,
     QSplitter,
     QStyleFactory,
@@ -23,17 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from directorytree import DirectoryTree
-from imagegallery import ImageGallery
-from imageviewer import ImageViewer
-from metadataviewer import MetadataViewer
-from utils import (
-    get_swarm_json_path,
-    get_swarm_preview_path,
-    is_video_file,
-    safe_remove_file,
-)
-from videoviewer import VideoViewer
+from .directorytree import DirectoryTree
 
 
 class KeybindingsDialog(QDialog):
@@ -158,8 +149,8 @@ class KeybindingsDialog(QDialog):
         self.setLayout(main_layout)
 
 
-class BowserMain(QMainWindow):
-    """Main application window for Bowser.
+class ViewMain(QMainWindow):
+    """Main viewer window for Bowser.
 
     This class manages the overall application layout, including:
     - Directory tree navigation
@@ -189,6 +180,9 @@ class BowserMain(QMainWindow):
         # Create menu bar
         self._create_menu_bar()
 
+        # Enable drag and drop
+        self.setAcceptDrops(True)
+
         # Create the three main widgets
         # 1. Directory tree
         self._directory_tree = DirectoryTree()
@@ -201,42 +195,13 @@ class BowserMain(QMainWindow):
         # Connect thumbnail clicked signal
         self._image_gallery.thumbnailClicked.connect(self._on_thumbnail_clicked)
 
-        # 3. Image Viewer and Video Viewer
-        self._viewer = QWidget()
-        self._viewer_layout = QVBoxLayout(self._viewer)
-        self._viewer.setLayout(self._viewer_layout)
-
-        # Create navigation buttons
-        self._navigation_buttons_layout = QHBoxLayout()
-        self._previous_button = QPushButton("Previous")
-        self._one_to_one_button = QPushButton("1:1")
-        self._fit_button = QPushButton("Fit")
-        self._mark_file_button = QPushButton("Mark File")
-        self._next_button = QPushButton("Next")
-        self._navigation_buttons_layout.addWidget(self._previous_button)
-        self._navigation_buttons_layout.addWidget(self._one_to_one_button)
-        self._navigation_buttons_layout.addWidget(self._fit_button)
-        self._navigation_buttons_layout.addWidget(self._mark_file_button)
-        self._navigation_buttons_layout.addWidget(self._next_button)
-        self._navigation_buttons_layout.setContentsMargins(0, 0, 0, 0)
-
-        # Add navigation buttons to the viewer layout
-        self._viewer_layout.addLayout(self._navigation_buttons_layout)
-
-        # Add image and video viewers
-        self._image_viewer = ImageViewer()
-        self._image_viewer.setStyleSheet("border: 1px solid gray;")
-        self._viewer_layout.addWidget(self._image_viewer)
-        self._video_viewer = VideoViewer()
-        self._video_viewer.setStyleSheet("border: 1px solid gray;")
-        self._viewer_layout.addWidget(self._video_viewer)
+        # 3. Image Video Viewer (handles both image and video viewing)
+        self._image_video_viewer = ImageVideoViewer()
 
         # Connect button signals
-        self._previous_button.clicked.connect(self._on_previous_clicked)
-        self._one_to_one_button.clicked.connect(self._on_one_to_one_clicked)
-        self._fit_button.clicked.connect(self._on_fit_clicked)
-        self._mark_file_button.clicked.connect(self._on_mark_file_clicked)
-        self._next_button.clicked.connect(self._on_next_clicked)
+        self._image_video_viewer.connect_previous_button(self._on_previous_clicked)
+        self._image_video_viewer.connect_mark_file_button(self._on_mark_file_clicked)
+        self._image_video_viewer.connect_next_button(self._on_next_clicked)
 
         # 4. JSON metadata display
         self._metadata_display = MetadataViewer()
@@ -245,7 +210,7 @@ class BowserMain(QMainWindow):
         self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
         self._main_splitter.addWidget(self._directory_tree)
         self._main_splitter.addWidget(self._image_gallery)
-        self._main_splitter.addWidget(self._viewer)
+        self._main_splitter.addWidget(self._image_video_viewer)
         self._main_splitter.addWidget(self._metadata_display)
 
         # Set initial sizes for the splitter
@@ -385,11 +350,11 @@ class BowserMain(QMainWindow):
         """Refresh the current folder by reloading it and reading its contents."""
         # Get the current root folder
         root_path = self._directory_tree.get_root_folder()
-        
+
         if root_path:
             # Re-open the root folder to refresh the directory tree
             self._open_root_folder_from_path(root_path)
-            
+
             # Re-read the current folder contents
             if self._last_file_path:
                 self.read_folder(self._last_file_path)
@@ -403,7 +368,7 @@ class BowserMain(QMainWindow):
         # Check if the path is a valid directory
         if os.path.isdir(folder_path):
             # Set the window title to show the folder path
-            self.setWindowTitle(f"Bowser - {folder_path}")
+            self.setWindowTitle(f"bowser-view - {folder_path}")
             # Use the directory tree's method to open the folder
             self._directory_tree.open_root_folder(folder_path)
 
@@ -447,14 +412,7 @@ class BowserMain(QMainWindow):
         """
         # Load and display file metadata
         self._metadata_display.load_file_metadata(file_path)
-
-        # Check file extension to determine if it's an image or video
-        if is_video_file(file_path):
-            # Handle video files
-            self._display_video(file_path)
-        else:
-            # Handle image files
-            self._display_image(file_path)
+        self._image_video_viewer.display_file(file_path)
 
     def _on_previous_clicked(self):
         """Handle Previous button click event."""
@@ -464,135 +422,45 @@ class BowserMain(QMainWindow):
         """Handle Next button click event."""
         self._image_gallery.next_thumbnail()
 
-    def _on_one_to_one_clicked(self):
-        """Handle 1:1 button click event."""
-        self._image_viewer.fullSize()
-
-    def _on_fit_clicked(self):
-        """Handle Fit button click event."""
-        self._image_viewer.normalSize()
-
     def _on_mark_file_clicked(self):
-        """Handle Mark File button click event."""
-        # Get the current file path from the image gallery
-        current_file = self._image_gallery.get_current_file_path()
-        if current_file:
-            # is it already marked? if so toggle
-            if current_file in self._marked_files:
-                self._marked_files.remove(current_file)
-                self._image_gallery.mark_current_file(False)
-            else:
-                self._image_gallery.mark_current_file(True)
-                self._marked_files.append(current_file)
-        # advance to the next file
-        self._on_next_clicked()
+        self._image_gallery.on_mark_file_clicked()
 
     def _delete_marked_files(self):
-        """Delete all marked files.
+        self._image_gallery.delete_marked_files()
 
-        This method:
-        1. Confirms deletion with the user
-        2. Removes the marked files from disk
-        3. Also removes associated Swarm metadata files (.swarm.json, .swarmpreview.jpg)
-        4. Refreshes the current folder view
-        5. Shows a success message with the count of deleted files
+    def dragEnterEvent(self, event):
+        """Handle drag enter event.
 
-        Error Handling:
-        - Handles file permission errors gracefully
-        - Provides detailed error messages in the console
-        - Continues with remaining files if one fails
+        Args:
+            event: QDragEnterEvent
         """
-        if not self._marked_files:
-            return
+        # Check if the drag contains URLs (files/folders)
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
 
-        # Confirm deletion with user
-        confirm = QMessageBox.question(
-            self,
-            "Confirm Deletion",
-            f"Are you sure you want to delete {len(self._marked_files)} marked file(s)?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
+    def dropEvent(self, event):
+        """Handle drop event.
 
-        if confirm == QMessageBox.StandardButton.Yes:
-            # Delete each marked file
-            deleted_count = 0
-            error_count = 0
-            current_folder = (
-                os.path.dirname(self._marked_files[0]) if self._marked_files else ""
-            )
+        Args:
+            event: QDropEvent
+        """
+        # Get the URLs from the drop event
+        urls = event.mimeData().urls()
+        if urls:
+            # Get the first URL's local path
+            folder_path = urls[0].toLocalFile()
 
-            for file_path in self._marked_files[:]:  # Use slice to iterate over a copy
-                try:
-                    if os.path.exists(file_path):
-                        os.remove(file_path)
-                        deleted_count += 1
-
-                        # Remove any matching .swarm.json and .swarmpreview.jpg files
-                        swarm_json_path = get_swarm_json_path(file_path)
-                        if os.path.exists(swarm_json_path):
-                            if safe_remove_file(swarm_json_path):
-                                deleted_count += 1
-
-                        # Remove .swarmpreview.jpg file if it exists
-                        swarm_preview_path = get_swarm_preview_path(file_path)
-                        if os.path.exists(swarm_preview_path):
-                            if safe_remove_file(swarm_preview_path):
-                                deleted_count += 1
-
-                        # Remove from marked files list
-                        self._marked_files.remove(file_path)
-                    else:
-                        print(f"Warning: File not found during deletion: {file_path}")
-                        self._marked_files.remove(file_path)
-                except PermissionError as e:
-                    print(f"Permission error deleting {file_path}: {e}")
-                    error_count += 1
-                except OSError as e:
-                    print(f"OS error deleting {file_path}: {e}")
-                    error_count += 1
-                except Exception as e:
-                    print(f"Unexpected error deleting {file_path}: {e}")
-                    error_count += 1
-
-            # Refresh the current folder in the gallery
-            if deleted_count > 0 and current_folder:
-                self.read_folder(current_folder)
-
-            # Show appropriate message based on results
-            if error_count > 0:
-                QMessageBox.warning(
-                    self,
-                    "Partial Success",
-                    f"Successfully deleted {deleted_count} file(s), but {error_count} file(s) failed to delete.\n"
-                    f"Check console for details.",
-                )
+            # Check if it's a valid directory
+            if os.path.isdir(folder_path):
+                # Open the folder
+                self._open_root_folder_from_path(folder_path)
+                event.acceptProposedAction()
             else:
-                QMessageBox.information(
-                    self,
-                    "Files Deleted",
-                    f"Successfully deleted {deleted_count} file(s).",
-                )
-
-    def _display_image(self, image_path):
-        """Display an image file in the ImageViewer widget.
-
-        Args:
-            image_path (str): Path to the image file.
-        """
-        self._video_viewer.hide()
-        self._image_viewer.show()
-        self._image_viewer.setImage(image_path)
-
-    def _display_video(self, video_path):
-        """Display a video file in the VideoViewer widget.
-
-        Args:
-            video_path (str): Path to the video file.
-        """
-        self._image_viewer.hide()
-        self._video_viewer.show()
-        self._video_viewer.loadVideo(video_path)
-        self._video_viewer.play()
+                event.ignore()
+        else:
+            event.ignore()
 
     def keyPressEvent(self, event):
         """Handle key press events for global keyboard shortcuts.
@@ -618,9 +486,9 @@ class BowserMain(QMainWindow):
         elif event.key() == Qt.Key.Key_D:
             self._on_next_clicked()
         elif event.key() == Qt.Key.Key_R:
-            self._image_viewer.normalSize()
+            self._image_video_viewer.get_image_viewer().normalSize()
         elif event.key() == Qt.Key.Key_1:
-            self._image_viewer.fullSize()
+            self._image_video_viewer.get_image_viewer().fullSize()
         elif event.key() == Qt.Key.Key_X:
             self._on_mark_file_clicked()
 

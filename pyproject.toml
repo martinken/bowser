@@ -1,10 +1,20 @@
 [project]
 name = "bowser"
 version = "0.1.0"
-description = "viewer manager for AI generated images and video"
-readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "pyside6>=6.10.1",
-    "pillow>=10.0.0",
+    "pillow>=12.1.0",
+    "pyside6>=6.10.2",
+    "core",
+    "opencv-python>=4.13.0.92",
 ]
+
+[tool.uv.workspace]
+members = [
+    "packages/core",
+    "apps/view",
+    "apps/gen",
+]
+
+[tool.uv.sources]
+core = { workspace = true }

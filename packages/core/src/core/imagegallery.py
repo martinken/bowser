@@ -11,7 +11,6 @@ from multiprocessing import Pool
 
 from PySide6.QtCore import (
     QMimeData,
-    QSize,
     Qt,
     QUrl,
     Signal,
@@ -22,27 +21,32 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QScrollArea,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
-from utils import (
+from .utils import (
     ALL_SUPPORTED_EXTENSIONS,
     MAX_PROCESSES,
     PROCESSING_CHUNK_SIZE,
+    get_swarm_json_path,
     get_swarm_preview_path,
     is_video_file,
+    safe_remove_file,
 )
 
 
 class DragLabel(QLabel):
     """A custom QLabel that supports drag and drop operations."""
 
+    thumbnailClicked = Signal(int)
+
     def __init__(self, index, parent=None):
         super().__init__(parent)
-        self._index = index
+        self.index = index
         self.setAcceptDrops(True)
         self._is_video = False
         self._marked = False
@@ -119,7 +123,9 @@ class DragLabel(QLabel):
         """Handle mouse press events to store the drag start position."""
         if event.button() == Qt.MouseButton.LeftButton:
             self.drag_start_position = event.pos()
-        super().mousePressEvent(event)
+            self.thumbnailClicked.emit(self.index)
+        else:
+            super().mousePressEvent(event)
 
 
 def load_image_worker(image_path, thumbnail_size, index):
@@ -148,7 +154,7 @@ def load_image_worker(image_path, thumbnail_size, index):
             image.thumbnail(thumbnail_size, Image.Resampling.LANCZOS)
             return (image_path, image.convert("RGB"), image.size, index)
         else:
-            return (image_path, None, index)
+            return (image_path, None, [0, 0], index)
     except Exception as e:
         print(f"Error loading image {image_path}: {e}")
         return (image_path, None, [0, 0], index)
@@ -180,10 +186,11 @@ class ImageGallery(QWidget):
         self._request_load_cancel = False
         self._thumbnail_widgets = []
         self._image_paths = []
+        self._marked_files = []
         self._current_columns = -1
         self._last_thumbnail_clicked_index = 0
-        self._thumbnail_size = QSize(192, 192)
-        self.setStyleSheet("color: gray;")
+        self._thumbnail_size = [192, 192]
+        # self.setStyleSheet("color: gray;")
         self._process_pool = None
         self._setup_ui()
 
@@ -225,6 +232,25 @@ class ImageGallery(QWidget):
         self._scroll_area.setWidget(self._content_widget)
         main_layout.addWidget(self._scroll_area)
 
+    def add_image(self, file_path):
+        # Get all supported files from the folder
+        supported_extensions = ALL_SUPPORTED_EXTENSIONS
+
+        if os.path.isfile(file_path):
+            ext = os.path.splitext(file_path)[1].lower()
+            if ext in supported_extensions:
+                i = len(self._image_paths)
+                self._image_paths.append(file_path)
+                # add a single thumbnail
+                self._create_empty_thumbnails()
+                self._build_thumbnail(i, file_path)
+                self._display_thumbnails()
+                (image_path, resized_image, size, index) = load_image_worker(
+                    file_path, self._thumbnail_size, i
+                )
+                self._set_thumbnail(resized_image, size, index)
+                self._on_thumbnail_clicked(index)
+
     def load_images_from_folder(self, folder_path):
         """Load and display images and videos from the specified folder.
 
@@ -240,15 +266,12 @@ class ImageGallery(QWidget):
         """
         self._image_paths = []
 
-        # Clear existing thumbnails
-        self._clear_thumbnails()
-
         # Get all supported files from the folder
         supported_extensions = ALL_SUPPORTED_EXTENSIONS
 
         for file_name in os.listdir(folder_path):
-            # exclude .swarmpreview images
-            if ".swarmpreview.jpg" not in file_name:
+            # exclude .swarmpreview images and bowser-temp images
+            if ".swarmpreview.jpg" not in file_name and "bowser-temp" not in file_name:
                 file_path = os.path.join(folder_path, file_name)
                 if os.path.isfile(file_path):
                     ext = os.path.splitext(file_name)[1].lower()
@@ -283,7 +306,7 @@ class ImageGallery(QWidget):
             # We subtract the left and right margins (3 pixels each)
             available_width = content_width - 6  # margins
             spacing = self._content_layout.spacing()
-            thumbnail_width = self._thumbnail_size.width()
+            thumbnail_width = self._thumbnail_size[0]
 
             # Calculate number of columns that fit
             columns = max(1, available_width // (thumbnail_width + spacing))
@@ -296,22 +319,49 @@ class ImageGallery(QWidget):
         if len(self._image_paths) > len(self._thumbnail_widgets):
             for i in range(len(self._thumbnail_widgets), len(self._image_paths)):
                 # Create thumbnail widget
-                self._thumbnail_widgets.append(self._create_thumbnail_widget(i))
+                widget = DragLabel(i)
+                widget.thumbnailClicked.connect(self._on_thumbnail_clicked)
+                self._thumbnail_widgets.append(widget)
+
+    def _build_thumbnail(self, i, image_path):
+        # build/reset thumbnail widget
+        self._thumbnail_widgets[i].set_highlighted(False)
+        self._thumbnail_widgets[i].set_marked(False)
+        self._thumbnail_widgets[i].setFixedSize(
+            self._thumbnail_size[0], self._thumbnail_size[1]
+        )
+        # Set placeholder text while loading
+        self._thumbnail_widgets[i].setText("Loading...")
+        self._thumbnail_widgets[i].set_image_path(image_path)
 
     def _build_thumbnails(self):
         if not self._image_paths:
             return
-
         for i, image_path in enumerate(self._image_paths):
-            # build/reset thumbnail widget
-            self._thumbnail_widgets[i].set_highlighted(False)
-            self._thumbnail_widgets[i].set_marked(False)
-            self._thumbnail_widgets[i].setFixedSize(self._thumbnail_size)
-            # self._thumbnail_widgets[i].setMinimumSize(self._thumbnail_size)
-            # self._thumbnail_widgets[i].setMaximumSize(self._thumbnail_size)
-            # Set placeholder text while loading
-            self._thumbnail_widgets[i].setText("Loading...")
-            self._thumbnail_widgets[i].set_image_path(image_path)
+            self._build_thumbnail(i, image_path)
+
+    def _set_thumbnail(self, resized_image, size, index):
+        try:
+            if resized_image is not None:
+                # Convert PIL Image to QPixmap in the main thread
+                from PySide6.QtGui import QImage, QPixmap
+
+                image = QImage(
+                    resized_image.tobytes(),
+                    size[0],
+                    size[1],
+                    size[0] * 3,
+                    QImage.Format.Format_RGB888,
+                )
+                pixmap = QPixmap.fromImage(image)
+
+                # Update the thumbnail widget
+                self._thumbnail_widgets[index].setPixmap(pixmap)
+            else:
+                self._thumbnail_widgets[index].setText("Image")
+        except Exception as e:
+            print(f"Error processing result for {self._image_paths[index]}: {e}")
+            self._thumbnail_widgets[index].setText("Error")
 
     def _load_thumbnails_in_parallel(self):
         """Load thumbnails in parallel using multiprocessing."""
@@ -319,7 +369,6 @@ class ImageGallery(QWidget):
             return
 
         # Prepare arguments for the worker function
-        thumbnail_size = (self._thumbnail_size.width(), self._thumbnail_size.height())
         image_paths = self._image_paths
 
         # Initialize process pool if not already done
@@ -335,36 +384,15 @@ class ImageGallery(QWidget):
                 results = []
                 for j, image_path in enumerate(chunk):
                     result = process_pool.apply_async(
-                        load_image_worker, args=(image_path, thumbnail_size, i + j)
+                        load_image_worker,
+                        args=(image_path, self._thumbnail_size, i + j),
                     )
                     results.append(result)
 
                 # Process results as they become available
                 for result in results:
-                    try:
-                        image_path, resized_image, size, index = result.get()
-                        if resized_image is not None:
-                            # Convert PIL Image to QPixmap in the main thread
-                            from PySide6.QtGui import QImage, QPixmap
-
-                            image = QImage(
-                                resized_image.tobytes(),
-                                size[0],
-                                size[1],
-                                size[0] * 3,
-                                QImage.Format.Format_RGB888,
-                            )
-                            pixmap = QPixmap.fromImage(image)
-
-                            # Update the thumbnail widget
-                            self._thumbnail_widgets[index].setPixmap(pixmap)
-                        else:
-                            self._thumbnail_widgets[index].setText("Image")
-                    except Exception as e:
-                        print(
-                            f"Error processing result for {self._image_paths[i]}: {e}"
-                        )
-                        self._thumbnail_widgets[i].setText("Error")
+                    image_path, resized_image, size, index = result.get()
+                    self._set_thumbnail(resized_image, size, index)
 
         # cleanup
         process_pool.close()
@@ -398,30 +426,6 @@ class ImageGallery(QWidget):
             else:
                 self._thumbnail_widgets[i].hide()
 
-    def _create_thumbnail_widget(self, index):
-        """Create a widget for displaying a thumbnail.
-
-        Args:
-            image_path (str): Path to the image file.
-
-        Returns:
-            QWidget: A widget containing the thumbnail.
-        """
-        # Create label for thumbnail with drag support
-        thumbnail_label = DragLabel(index)
-
-        # Override mousePressEvent to handle both click and drag initialization
-        def handle_mouse_press(event):
-            # Initialize drag start position for drag functionality
-            thumbnail_label.drag_start_position = event.pos()
-
-            # Handle click functionality
-            if event.button() == Qt.MouseButton.LeftButton:
-                self._on_thumbnail_clicked(index)
-
-        thumbnail_label.mousePressEvent = handle_mouse_press
-        return thumbnail_label
-
     def _on_filter_text_changed(self, text):
         """Handle filter text changed event.
 
@@ -430,6 +434,16 @@ class ImageGallery(QWidget):
         """
         # Apply filtering to the image paths
         self._display_thumbnails()
+
+    def show_image(self, filename):
+        if not self._image_paths:
+            return False
+
+        # try to find the file
+        for idx, path in enumerate(self._image_paths):
+            if path == filename and not self._thumbnail_widgets[idx].isHidden():
+                self._on_thumbnail_clicked(idx)
+                return
 
     def _show_first_visible_thumbnail(self):
         if not self._image_paths:
@@ -443,7 +457,7 @@ class ImageGallery(QWidget):
         ):
             new_index += 1
 
-        # Only select is we found at least one visible thumbnail
+        # Only select if we found at least one visible thumbnail
         if new_index < len(self._image_paths):
             self._on_thumbnail_clicked(new_index)
             return True
@@ -542,9 +556,10 @@ class ImageGallery(QWidget):
         self._current_columns = -1
         while self._content_layout.count():
             item = self._content_layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.hide()
+            if item is not None:
+                widget = item.widget()
+                if widget is not None:
+                    widget.hide()
 
     def resizeEvent(self, event):
         """Handle resize events to adjust the thumbnail layout.
@@ -593,11 +608,145 @@ class ImageGallery(QWidget):
         thumbnail_widget.set_marked(value)
         return True
 
+    def on_mark_file_clicked(self):
+        """Handle Mark File button click event."""
+        # Get the current file path from the image gallery
+        current_file = self.get_current_file_path()
+        if current_file:
+            # is it already marked? if so toggle
+            if current_file in self._marked_files:
+                self._marked_files.remove(current_file)
+                self.mark_current_file(False)
+            else:
+                self.mark_current_file(True)
+                self._marked_files.append(current_file)
+        # advance to the next file
+        self.next_thumbnail()
+
+    def delete_marked_files(self):
+        """Delete all marked files.
+
+        This method:
+        1. Confirms deletion with the user
+        2. Removes the marked files from disk
+        3. Also removes associated Swarm metadata files (.swarm.json, .swarmpreview.jpg)
+        4. Removes the deleted files from _image_paths and _thumbnail_widgets
+        5. Refreshes the display without reloading the entire directory
+        6. Shows a success message with the count of deleted files
+
+        Error Handling:
+        - Handles file permission errors gracefully
+        - Provides detailed error messages in the console
+        - Continues with remaining files if one fails
+        """
+        if not self._marked_files:
+            return
+
+        # Confirm deletion with user
+        confirm = QMessageBox.question(
+            self,
+            "Confirm Deletion",
+            f"Are you sure you want to delete {len(self._marked_files)} marked file(s)?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+
+        if confirm == QMessageBox.StandardButton.Yes:
+            self._thumbnail_widgets[self._last_thumbnail_clicked_index].set_highlighted(
+                False
+            )
+            self._last_thumbnail_clicked_index = 0
+
+            # Delete each marked file
+            deleted_count = 0
+            error_count = 0
+
+            # Create a list of indices to remove (in reverse order to avoid index shifting issues)
+            indices_to_remove = []
+            # List to store moved widgets and their paths
+            moved_widgets = []
+
+            for file_path in self._marked_files[:]:  # Use slice to iterate over a copy
+                try:
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                        deleted_count += 1
+
+                        # Remove any matching .swarm.json and .swarmpreview.jpg files
+                        swarm_json_path = get_swarm_json_path(file_path)
+                        if os.path.exists(swarm_json_path):
+                            if safe_remove_file(swarm_json_path):
+                                deleted_count += 1
+
+                        # Remove .swarmpreview.jpg file if it exists
+                        swarm_preview_path = get_swarm_preview_path(file_path)
+                        if os.path.exists(swarm_preview_path):
+                            if safe_remove_file(swarm_preview_path):
+                                deleted_count += 1
+
+                        # Find the index of this file in _image_paths
+                        if file_path in self._image_paths:
+                            index = self._image_paths.index(file_path)
+                            indices_to_remove.append(index)
+
+                        # Remove from marked files list
+                        self._marked_files.remove(file_path)
+                    else:
+                        print(f"Warning: File not found during deletion: {file_path}")
+                        self._marked_files.remove(file_path)
+                except PermissionError as e:
+                    print(f"Permission error deleting {file_path}: {e}")
+                    error_count += 1
+                except OSError as e:
+                    print(f"OS error deleting {file_path}: {e}")
+                    error_count += 1
+                except Exception as e:
+                    print(f"Unexpected error deleting {file_path}: {e}")
+                    error_count += 1
+
+            # Move deleted widgets to the end of the list instead of deleting them
+            # This saves the overhead of recreating them later
+            for index in sorted(indices_to_remove, reverse=True):
+                if index < len(self._image_paths):
+                    # Remove from image paths
+                    self._image_paths.pop(index)
+                    # Move widget to end of list instead of deleting
+                    if index < len(self._thumbnail_widgets):
+                        widget = self._thumbnail_widgets.pop(index)
+                        moved_widgets.append(widget)
+
+            # Add moved widgets to the end of the list with empty paths
+            for widget in moved_widgets:
+                self._thumbnail_widgets.append(widget)
+                widget.hide()
+
+            # renumber the index value for the widgets
+            for i, widget in enumerate(self._thumbnail_widgets):
+                widget.index = i
+
+            # Refresh the display
+            if deleted_count > 0:
+                self._display_thumbnails()
+
+            # Show appropriate message based on results
+            if error_count > 0:
+                QMessageBox.warning(
+                    self,
+                    "Partial Success",
+                    f"Successfully deleted {deleted_count} file(s), but {error_count} file(s) failed to delete.\n"
+                    f"Check console for details.",
+                )
+            else:
+                QMessageBox.information(
+                    self,
+                    "Files Deleted",
+                    f"Successfully deleted {deleted_count} file(s).",
+                )
+
     def set_thumbnail_size(self, size):
         """Set the size for thumbnails.
 
         Args:
-            size (QSize): The size for thumbnails.
+            size list[width, height]: The size for thumbnails.
         """
         self._thumbnail_size = size
         # Reload thumbnails with new size
@@ -608,3 +757,27 @@ class ImageGallery(QWidget):
                 self._process_pool.join()
                 self._process_pool = None
             self.load_images_from_folder(os.path.dirname(self._image_paths[0]))
+
+    def clear_images(self):
+        """Clear all images from the gallery.
+
+        This method clears all image paths, removes all thumbnail widgets,
+        and resets the gallery to an empty state.
+        """
+        # Clear all image paths
+        self._image_paths.clear()
+
+        # Clear all thumbnail widgets
+        for widget in self._thumbnail_widgets:
+            widget.deleteLater()
+        self._thumbnail_widgets.clear()
+
+        # Clear marked files
+        self._marked_files.clear()
+
+        # Reset state variables
+        self._last_thumbnail_clicked_index = 0
+        self._current_columns = -1
+
+        # Clear the content layout
+        self._clear_thumbnails()

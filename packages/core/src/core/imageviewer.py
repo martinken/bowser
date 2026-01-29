@@ -8,17 +8,21 @@ import os
 
 os.environ["QT_LOGGING_RULES"] = "*.debug=false;qt.multimedia.*=false"
 
+from PIL.ImageQt import ImageQt
 from PySide6.QtCore import QPointF, Qt, Slot
 from PySide6.QtGui import (
+    QMovie,
     QPainter,
     QPalette,
     QPixmap,
     QTransform,
 )
 from PySide6.QtWidgets import (
+    QGraphicsProxyWidget,
     QGraphicsScene,
     QGraphicsView,
     QHBoxLayout,
+    QLabel,
     QSizePolicy,
     QWidget,
 )
@@ -43,6 +47,10 @@ class ImageViewer(QWidget):
             parent: Parent widget (optional).
         """
         super().__init__(parent)
+
+        self._movie = None
+        self._image = None
+
         self._transform = QTransform()
         self._image_view = QGraphicsView()
         self._image_view.setInteractive(False)
@@ -68,26 +76,75 @@ class ImageViewer(QWidget):
 
         # Create a horizontal layout to hold the image
         images_layout = QHBoxLayout(self)
+        images_layout.setContentsMargins(0, 0, 0, 0)
         images_layout.addWidget(self._image_view)
         self.setLayout(images_layout)
 
-    def setImage(self, new_image):
-        """Load and display an image.
+        # Set size policy to ensure widget is never taller than it is wide
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-        Args:
-            new_image (str): Path to the image file to load.
-        """
-        self._image = QPixmap(new_image)
+    def setPILImage(self, new_image):
+        # clear any existing
+        self.clear()
+
+        """display an image."""
+        # Convert PIL Image to QImage using ImageQt
+        qimage = ImageQt(new_image)
+
+        # Convert QImage to QPixmap
+        self._image = QPixmap.fromImage(qimage)
         if not self._image.isNull():
             # Clear previous scenes and add new pixmap items
-            self._image_scene.clear()
             self._image_scene.addPixmap(self._image)
 
         self._image_view.setVisible(True)
         self.normalSize()
 
+    def setImageFile(self, new_image):
+        """Load and display an image.
+
+        Args:
+            new_image (str): Path to the image file to load.
+        """
+        # clear any existing
+        self.clear()
+
+        # assume webp is animated
+        if os.path.splitext(new_image)[1].lower() == ".webp":
+            gif_anim = QLabel()
+            self._movie = QMovie(new_image)
+
+            gif_anim.setMovie(self._movie)
+            self._movie.start()
+            self._image = self._image_scene.addWidget(gif_anim)
+        else:
+            self._image = QPixmap(new_image)
+            if not self._image.isNull():
+                self._image_scene.addPixmap(self._image)
+
+        self._image_view.setVisible(True)
+        self.normalSize()
+
+    def clear(self):
+        if self._image and isinstance(self._image, QPixmap):
+            self._image_scene.clear()
+            self._image = None
+        elif (
+            self._image
+            and self._movie
+            and isinstance(self._image, QGraphicsProxyWidget)
+            and isinstance(self._movie, QMovie)
+        ):
+            self._movie.stop()
+            self._image_scene.clear()
+            self._movie.deleteLater()
+            self._movie = None
+            self._image = None
+
     @Slot()
     def normalSize(self):
+        if self._image is None or not hasattr(self._image, "size"):
+            return
         image_size = self._image.size()
         view_size = self._image_view.size()
         hscale = view_size.width() / image_size.width()
@@ -108,6 +165,8 @@ class ImageViewer(QWidget):
         self._image_view.setTransform(self._transform)
 
     def fullSize(self):
+        if self._image is None or not hasattr(self._image, "size"):
+            return
         image_size = self._image.size()
         view_size = self._image_view.size()
         scale = 1.0
@@ -153,7 +212,7 @@ class ImageViewer(QWidget):
         """Handle resize events and adjust image scaling accordingly."""
         super().resizeEvent(event)
         # Invoke normalSize to maintain proper scaling when widget is resized
-        if hasattr(self, '_image') and not self._image.isNull():
+        if hasattr(self, "_image") and self._image is not None:
             self.normalSize()
 
     def eventFilter(self, source, event):

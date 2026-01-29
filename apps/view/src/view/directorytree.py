@@ -6,10 +6,9 @@ folder navigation, filtering, and key-based navigation between folders.
 
 import os
 
+from core.utils import is_directory_empty
 from PySide6.QtCore import QDir, QPersistentModelIndex, QSortFilterProxyModel, Qt
 from PySide6.QtWidgets import QFileSystemModel, QTreeView
-
-from utils import is_directory_empty
 
 
 class FileProxyModel(QSortFilterProxyModel):

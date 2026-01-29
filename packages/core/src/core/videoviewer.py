@@ -7,14 +7,6 @@ navigation, frame capture, and metadata display capabilities.
 import os
 
 from PySide6.QtCore import QUrl
-
-from utils import (
-    DEFAULT_FRAME_RATE,
-    DEFAULT_VOLUME,
-    SUPPORTED_VIDEO_EXTENSIONS,
-    get_frame_filename,
-    get_swarm_json_path,
-)
 from PySide6.QtMultimedia import QAudioOutput, QMediaMetaData, QMediaPlayer, QVideoSink
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
@@ -26,10 +18,18 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .utils import (
+    DEFAULT_FRAME_RATE,
+    DEFAULT_VOLUME,
+    SUPPORTED_VIDEO_EXTENSIONS,
+    get_frame_filename,
+    get_swarm_json_path,
+)
+
 
 class VideoViewer(QWidget):
     """A widget for displaying and playing video files with advanced controls.
-    
+
     Features include:
     - Playback controls (play, pause, stop)
     - Frame-by-frame navigation (-1, +1 buttons)
@@ -42,7 +42,7 @@ class VideoViewer(QWidget):
 
     def __init__(self, parent=None):
         """Initialize the VideoViewer widget.
-        
+
         Args:
             parent: Parent widget (optional).
         """
@@ -110,16 +110,16 @@ class VideoViewer(QWidget):
 
     def loadVideo(self, video_path):
         """Load and prepare a video file for playback.
-        
+
         This method:
         1. Validates the file exists
         2. Checks the file extension is supported
         3. Stops any currently playing video
         4. Sets the media source for playback
-        
+
         Args:
             video_path (str): Path to the video file (MP4, MOV, etc.).
-            
+
         Returns:
             bool: True if the video was loaded successfully, False otherwise.
         """
