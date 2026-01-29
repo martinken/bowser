@@ -149,6 +149,13 @@ class ImageViewer(QWidget):
         )
         self._image_view.setTransform(self._transform)
 
+    def resizeEvent(self, event):
+        """Handle resize events and adjust image scaling accordingly."""
+        super().resizeEvent(event)
+        # Invoke normalSize to maintain proper scaling when widget is resized
+        if hasattr(self, '_image') and not self._image.isNull():
+            self.normalSize()
+
     def eventFilter(self, source, event):
         """Handle scroll wheel events for zooming and mouse dragging for panning"""
         if event.type() == event.Type.Wheel:

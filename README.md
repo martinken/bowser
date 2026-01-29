@@ -110,7 +110,6 @@ Bowser is built with:
 - **Qt Multimedia**: For video playback
 - **Python 3.7+**: Core language
 - **Pillow (PIL)**: For image processing and EXIF metadata
-- **tinytag**: For video metadata extraction
 - **multiprocessing**: For parallel thumbnail generation
 
 ### Code Organization
@@ -149,4 +148,4 @@ This project is open source. See the LICENSE file for details.
 ## Acknowledgments
 
 - Thanks to the PySide6 and Qt communities for excellent documentation and support
-- Special thanks to the developers of Pillow, tinytag, and other dependencies
+- Special thanks to the developers of Pillow, and other dependencies

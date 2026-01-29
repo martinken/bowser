@@ -23,7 +23,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-# from tinytag import TinyTag
 from utils import (
     get_swarm_json_path,
     is_video_file,
@@ -35,7 +34,7 @@ class MetadataViewer(QWidget):
 
     Features include:
     - Display of EXIF data from images (using PIL)
-    - Display of metadata from videos (using tinytag)
+    - Display of metadata from videos
     - Support for sidecar JSON files (e.g., SwarmUI .swarm.json files)
     - Dedicated GUI elements for File, Size, Seed, and Prompt with copy buttons
     - Copy-to-clipboard functionality for individual metadata fields
@@ -430,16 +429,6 @@ class MetadataViewer(QWidget):
                     metadata.update(swarm_data)
             except Exception as e:
                 metadata["SwarmJSON"] = f"Error reading swarm.json: {str(e)}"
-
-        # try:
-        #     # Pass the file path to TinyTag.get()
-        #     tag = TinyTag.get(video_path)
-
-        #     metadata.update(tag.as_dict())
-        #     # print(tag.as_dict())
-
-        # except Exception as e:
-        #     metadata["TinyTAG"] = f"An error occurred: {e}"
 
         result = self._expand_metadata(metadata)
         self.set_metadata(result)

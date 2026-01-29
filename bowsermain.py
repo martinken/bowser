@@ -287,6 +287,12 @@ class BowserMain(QMainWindow):
         open_folder_action.triggered.connect(self._open_root_folder)
         main_menu.addAction(open_folder_action)
 
+        # Create Refresh action
+        refresh_action = QAction("Refresh", self)
+        refresh_action.setShortcut("F5")
+        refresh_action.triggered.connect(self._refresh_current_folder)
+        main_menu.addAction(refresh_action)
+
         # Add separator
         main_menu.addSeparator()
 
@@ -375,6 +381,19 @@ class BowserMain(QMainWindow):
         if folder_path:
             self._open_root_folder_from_path(folder_path)
 
+    def _refresh_current_folder(self):
+        """Refresh the current folder by reloading it and reading its contents."""
+        # Get the current root folder
+        root_path = self._directory_tree.get_root_folder()
+        
+        if root_path:
+            # Re-open the root folder to refresh the directory tree
+            self._open_root_folder_from_path(root_path)
+            
+            # Re-read the current folder contents
+            if self._last_file_path:
+                self.read_folder(self._last_file_path)
+
     def _open_root_folder_from_path(self, folder_path: str) -> None:
         """Open a folder from a given path.
 
@@ -383,6 +402,8 @@ class BowserMain(QMainWindow):
         """
         # Check if the path is a valid directory
         if os.path.isdir(folder_path):
+            # Set the window title to show the folder path
+            self.setWindowTitle(f"Bowser - {folder_path}")
             # Use the directory tree's method to open the folder
             self._directory_tree.open_root_folder(folder_path)
 
