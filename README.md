@@ -23,6 +23,8 @@ AI-generated images and videos. It consists of:
 
 ### bowser-gen
 
+![screenshort from bowser-gen](assets/bowser-gen.jpg)
+
 A Qt-based graphical user interface for ComfyUI, designed to provide an
 intuitive workflow management system for stable diffusion and other AI image
 generation tasks.
@@ -37,6 +39,8 @@ generation tasks.
 **See:** [apps/gen/README.md](apps/gen/README.md)
 
 ### bowser-view
+
+![screenshort from bowser-view](assets/bowser-view.jpg)
 
 A desktop application for browsing, viewing, and managing image and video files, with special support for AI-generated content and metadata.
 

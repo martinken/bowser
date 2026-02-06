@@ -26,6 +26,8 @@ Bowser is a desktop application for browsing, viewing, and managing image and vi
 - **Metadata viewing**: Display JSON metadata for files
 - **Keyboard navigation**: Efficient keyboard shortcuts for navigation
 
+![screenshort from bowser-view](../../assets/bowser-view.jpg)
+
 ### Installation
 
 Bowser was tested on Python 3.12 and PySide6. uv used for package management with a pyproject.toml Then run the application:

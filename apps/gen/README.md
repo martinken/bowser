@@ -11,6 +11,8 @@ A Qt-based graphical user interface for ComfyUI, designed to provide an intuitiv
 - Track job progress and history
 - Import/export workflow settings
 
+![screenshort from bowser-gen](../../assets/bowser-gen.jpg)
+
 ## Features
 
 ### Workflow Management
