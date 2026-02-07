@@ -6,6 +6,7 @@ sidecar metadata files.
 """
 
 import json
+from typing import Any, Dict, Optional, Union
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -24,6 +25,9 @@ from .metadatahandler import MetadataHandler
 
 
 class MetadataViewer(QWidget):
+    # Constants for text box height management
+    COMPACT_TEXT_BOX_HEIGHT = 69
+    UNLIMITED_TEXT_BOX_HEIGHT = 16777215  # Maximum possible value for int
     """A widget for displaying structured metadata information.
 
     Features include:
@@ -40,22 +44,24 @@ class MetadataViewer(QWidget):
     - Automatic text wrapping for long metadata values
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent: Optional[QWidget] = None, metadata_handler: Optional[MetadataHandler] = None):
         """Initialize the MetadataViewer widget.
 
         Args:
             parent: Parent widget (optional).
+            metadata_handler: MetadataHandler instance for dependency injection.
+                            If None, a default MetadataHandler will be created.
         """
         super().__init__(parent)
 
-        # Initialize metadata handler
-        self.metadata_handler = MetadataHandler()
+        # Initialize metadata handler (use provided or create default)
+        self.metadata_handler = metadata_handler if metadata_handler is not None else MetadataHandler()
 
         # Initialize field labels dictionary early
-        self.field_labels = {}
+        self.field_labels: Dict[str, QLabel] = {}
 
         # Initialize field frames dictionary for showing/hiding
-        self.field_frames = {}
+        self.field_frames: Dict[str, QFrame] = {}
 
         # Create main layout
         self.main_layout = QVBoxLayout(self)
@@ -125,8 +131,8 @@ class MetadataViewer(QWidget):
         self.main_layout.addWidget(self.metadata_text, 1)  # Take remaining space
 
     def _create_field_layout(
-        self, label_text, initial_value, grid_layout, set_minimum_size=False
-    ):
+        self, label_text: str, initial_value: str, grid_layout: QVBoxLayout, set_minimum_size: bool = False
+    ) -> None:
         """Create a horizontal layout with label, value, and copy button.
 
         Args:
@@ -152,7 +158,7 @@ class MetadataViewer(QWidget):
 
         # Value label (will be updated dynamically)
         value_label = QLabel(initial_value)
-        value_label.setMaximumHeight(69)
+        value_label.setMaximumHeight(self.COMPACT_TEXT_BOX_HEIGHT)
         value_label.setStyleSheet(
             "border: 1px solid #555555; border-radius: 3px; padding-left: 4px; color: #ffffff;"
         )
@@ -211,7 +217,7 @@ class MetadataViewer(QWidget):
         # Add frame to grid
         grid_layout.addWidget(frame)
 
-    def _copy_to_clipboard(self, text):
+    def _copy_to_clipboard(self, text: str) -> None:
         """Copy text to clipboard."""
         if text and text != "":
             clipboard = QApplication.clipboard()
@@ -219,28 +225,28 @@ class MetadataViewer(QWidget):
             # Show visual feedback
             self._show_copy_feedback()
 
-    def _show_copy_feedback(self):
+    def _show_copy_feedback(self) -> None:
         """Show visual feedback when text is copied."""
         # Change cursor to indicate success
         QApplication.setOverrideCursor(Qt.CursorShape.PointingHandCursor)
         QApplication.processEvents()
         QApplication.restoreOverrideCursor()
 
-    def _toggle_value_height(self, value_label):
-        """Toggle the maximum height of a value label between unlimited and 69 pixels.
+    def _toggle_value_height(self, value_label: QLabel) -> None:
+        """Toggle the maximum height of a value label between unlimited and compact height.
 
         Args:
             value_label: The QLabel whose height should be toggled.
         """
         current_max_height = value_label.maximumHeight()
-        if current_max_height == 69:
+        if current_max_height == self.COMPACT_TEXT_BOX_HEIGHT:
             # Expand to unlimited height
-            value_label.setMaximumHeight(16777215)  # Maximum possible value for int
+            value_label.setMaximumHeight(self.UNLIMITED_TEXT_BOX_HEIGHT)
         else:
-            # Collapse to 69 pixels
-            value_label.setMaximumHeight(69)
+            # Collapse to compact height
+            value_label.setMaximumHeight(self.COMPACT_TEXT_BOX_HEIGHT)
 
-    def set_metadata(self, metadata):
+    def set_metadata(self, metadata: Union[str, Dict[str, Any]]) -> None:
         """Set the metadata to display.
 
         Args:
@@ -264,7 +270,7 @@ class MetadataViewer(QWidget):
             # Treat as string
             self.metadata_text.setPlainText(metadata)
 
-    def _update_dedicated_fields(self, extracted_values):
+    def _update_dedicated_fields(self, extracted_values: Dict[str, Any]) -> None:
         """Update the dedicated GUI fields with extracted values.
 
         This method iterates through all field labels and updates them based on
@@ -290,7 +296,7 @@ class MetadataViewer(QWidget):
                     self.field_frames[field_name].setEnabled(False)
                     self.field_frames[field_name].setVisible(False)
 
-    def load_file_metadata(self, file_path):
+    def load_file_metadata(self, file_path: str) -> None:
         """Load and display metadata from an image or video file.
 
         This method automatically detects whether the file is an image or video

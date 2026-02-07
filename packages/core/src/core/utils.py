@@ -13,24 +13,54 @@ Key functionality:
 
 import os
 import time
+from typing import List, Tuple
 
 # File format constants
-SUPPORTED_IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".webp"]
+SUPPORTED_IMAGE_EXTENSIONS: List[str] = [".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".webp"]
 
-SUPPORTED_VIDEO_EXTENSIONS = [".mp4", ".mov", ".avi", ".mkv", ".flv"]
+SUPPORTED_VIDEO_EXTENSIONS: List[str] = [".mp4", ".mov", ".avi", ".mkv", ".flv"]
 
-ALL_SUPPORTED_EXTENSIONS = SUPPORTED_IMAGE_EXTENSIONS + SUPPORTED_VIDEO_EXTENSIONS
+ALL_SUPPORTED_EXTENSIONS: List[str] = SUPPORTED_IMAGE_EXTENSIONS + SUPPORTED_VIDEO_EXTENSIONS
 
 # Default values
-DEFAULT_THUMBNAIL_SIZE = (192, 192)
-DEFAULT_FRAME_RATE = 30.0
-DEFAULT_VOLUME = 100
-MAX_PROCESSES = 8
-PROCESSING_CHUNK_SIZE = 24
+DEFAULT_THUMBNAIL_SIZE: Tuple[int, int] = (192, 192)
+DEFAULT_FRAME_RATE: float = 30.0
+DEFAULT_VOLUME: int = 100
+MAX_PROCESSES: int = 8
+PROCESSING_CHUNK_SIZE: int = 24
+
+
+# extract GPU number from COmfyUI device string
+def get_gpu_from_device_string(device: str) -> str:
+    gpu = "N/A"
+    if isinstance(device, str):
+        # Look for common GPU patterns like 3090, 5080, 4070, etc. in device
+        # Make sure it occurs after RTX, should work with a string like
+        # "cuda:0 NVIDIA GeForce RTX 3090 : cudaMallocAsync" -> 3090
+        import re
+
+        # First try to match GPU model numbers that follow RTX or GTX
+        gpu_match = re.search(
+            r"(RTX|GTX)\s+(\b(30[0-9]{2}|40[0-9]{2}|50[0-9]{2}|60[0-9]{2}|70[0-9]{2}|80[0-9]{2}|90[0-9]{2}|10[0-9]{2}|20[0-9]{2}|16[0-9]{2}|24[0-9]|A[0-9]{4})\b)",
+            device,
+            re.IGNORECASE,
+        )
+        if gpu_match:
+            gpu = gpu_match.group(2)
+        else:
+            # Fallback: try to match standalone GPU model numbers
+            gpu_match = re.search(
+                r"\b(30[0-9]{2}|40[0-9]{2}|50[0-9]{2}|60[0-9]{2}|70[0-9]{2}|80[0-9]{2}|90[0-9]{2}|10[0-9]{2}|20[0-9]{2}|16[0-9]{2}|24[0-9]|A[0-9]{4}|RTX|GTX)\b",
+                device,
+                re.IGNORECASE,
+            )
+            if gpu_match:
+                gpu = gpu_match.group(0)
+    return gpu
 
 
 # return true if it is a valid int
-def check_int(s):
+def check_int(s: str) -> bool:
     if s[0] in ("-", "+"):
         return s[1:].isdigit()
     return s.isdigit()

@@ -10,6 +10,7 @@ from random import randint
 import cv2
 from core.imageviewer import ImageViewer
 from core.utils import (
+    get_gpu_from_device_string,
     get_swarm_json_path,
     get_swarm_preview_path,
     replace_variables_in_string,
@@ -37,6 +38,62 @@ from PySide6.QtWidgets import (
 
 from .comfyserver import comfyServer
 
+# workflow:gpu:rate
+# Performance data based on GPU compute power and VRAM capacity
+# Values represent operations per second (higher is better)
+# RTX 3090 used as baseline reference (600,000 ops/sec)
+performance_data = {
+    "Wan22-I2V-Lora-Lightning-API": {"3090": 566065, "5090": 1850000},
+    "z_image_turbo-API": {"3090": 800920, "5090": 1900000},
+    "Wan22-Extend-24G-Q6-API": {"3090": 500000, "5090": 1750000},
+    # Performance estimates for various GPUs
+    "Guesses": {
+        # NVIDIA RTX 30 Series
+        "3090": 600000,  # Baseline reference
+        "3090ti": 650000,  # Slightly faster than 3090
+        "3080ti": 550000,  # Similar to 3090 but with less VRAM
+        "3080": 500000,  # Good performance, 10GB VRAM
+        "3070ti": 420000,  # Slightly faster than 3070
+        "3070": 400000,  # Mid-range, 8GB VRAM
+        "3060ti": 350000,  # Good value, 8GB VRAM
+        "3060": 280000,  # Entry level, 12GB VRAM but slower
+        # NVIDIA RTX 40 Series
+        "4090": 1100000,  # Much faster than 3090
+        "4080": 900000,  # Fast, 16GB VRAM
+        "4070ti": 750000,  # Good performance
+        "4070": 650000,  # Mid-range
+        "4060ti": 500000,  # Good value
+        "4060": 400000,  # Entry level
+        # NVIDIA RTX 20 Series (older generation)
+        "2080ti": 350000,  # Older but still capable
+        "2080super": 300000,
+        "2080": 280000,
+        "2070super": 250000,
+        "2070": 230000,
+        "2060super": 200000,
+        "2060": 180000,
+        # NVIDIA RTX 50 Series
+        "5090": 1500000,  # Next-gen flagship
+        "5080": 900000,  # Next-gen high-end
+        "5070": 650000,  # Mid-range
+        "5060": 400000,  # Entry level
+        # AMD Radeon GPUs (estimated based on relative performance)
+        "rx7900xtx": 700000,  # AMD flagship
+        "rx7900xt": 650000,
+        "rx7800xt": 550000,
+        "rx6950xt": 500000,  # Older AMD high-end
+        "rx6900xt": 480000,
+        "rx6800xt": 450000,
+        "rx6800": 420000,
+        "rx6700xt": 380000,
+        # Laptop GPUs (lower performance due to power limits)
+        "3080laptop": 400000,  # Laptop version of 3080
+        "3070laptop": 320000,  # Laptop version of 3070
+        "4070laptop": 550000,  # Laptop version of 4070
+        "4060laptop": 350000,  # Laptop version of 4060
+    },
+}
+
 
 class Job:
     def __init__(self, workflow_name, workflow, count, parent=None):
@@ -47,6 +104,94 @@ class Job:
         self.start_seed = -1
         self.results = {}
         self.error = False
+        self.ops = 1
+        self.estimated_runtime = 1.0
+        self.compute_ops()
+
+    def compute_estimated_runtime(self, rate):
+        self.estimated_runtime = self.count * self.ops / rate
+
+    def get_remaining_estimated_runtime(self):
+        if len(self.results) > 0 and "start_time" in self.results[0]:
+            return (
+                self.estimated_runtime
+                - time.time()
+                + self.results[self.completions]["start_time"]
+            )
+        else:
+            return self.estimated_runtime
+
+    def compute_ops(self):
+        metadata = {}
+        width = 1000
+        height = 1000
+        for id, node in self._workflow.items():
+            if node["class_type"].startswith("SwarmInput"):
+                # extract important values from workflow
+                node_metadata = {}
+
+                # extract dimension in case we find no other dims
+                if node["class_type"] == "SwarmInputImage":
+                    width = node["input_width"]
+                    height = node["input_height"]
+                elif node["class_type"] == "SwarmInputVideo":
+                    width = node["input_width"]
+                    height = node["input_height"]
+
+                # Get title for identification
+                if "title" in node.get("inputs", {}):
+                    node_metadata["title"] = node["inputs"]["title"]
+
+                # Extract Steps, Width, Height, Aspect Ratio, Frames based on title
+                title_lower = node_metadata.get("title", "").lower()
+
+                # Check if this node contains a value we're interested in
+                if "value" in node.get("inputs", {}):
+                    value = node["inputs"]["value"]
+
+                    # Try to extract Steps
+                    if "steps" in title_lower or "step" in title_lower:
+                        node_metadata["steps"] = value
+                    # Try to extract Width
+                    elif "width" in title_lower:
+                        node_metadata["width"] = value
+                    # Try to extract Height
+                    elif "height" in title_lower:
+                        node_metadata["height"] = value
+                    # Try to extract Aspect Ratio
+                    elif "aspect" in title_lower or "ratio" in title_lower:
+                        node_metadata["aspectratio"] = value
+                    # Try to extract Frames
+                    elif "frames" in title_lower or "frame" in title_lower:
+                        node_metadata["frames"] = value
+
+                # Only add to metadata_list if we found relevant data
+                if node_metadata:
+                    metadata.update(node_metadata)
+
+        # Process metadata to extract width and height from aspectratio if needed
+        # If width and height are missing, try to extract them from the aspectratio field
+        # examples "1M  4:3 1152, 864" would be 1152 width and 864 height
+        if metadata.get("width") is None or metadata.get("height") is None:
+            aspectratio = metadata.get("aspectratio", "")
+            if aspectratio:
+                # Try to extract width and height from aspectratio
+                # Pattern: look for two numbers separated by comma or space
+                import re
+
+                match = re.search(r"(\d+)\s*[xX,]\s*(\d+)", str(aspectratio))
+                if match:
+                    if metadata.get("width") is None:
+                        metadata["width"] = match.group(1)
+                    if metadata.get("height") is None:
+                        metadata["height"] = match.group(2)
+
+        # Compute total of width*height*steps*frames
+        width = int(metadata.get("width", width))
+        height = int(metadata.get("height", height))
+        steps = int(metadata.get("steps", 10))
+        frames = int(metadata.get("frames", 1))
+        self.ops = width * height * steps * frames
 
     def set_start_time(self, timestamp):
         self.results[self.completions]["start_time"] = timestamp
@@ -65,6 +210,7 @@ class Job:
         self.results[self.completions] = {}
         if self.completions == 0:
             self.results[0]["input_images"] = {}
+            self.results[0]["input_videos"] = {}
         for id, node in workflow.items():
             # remove any options entries
             if "options" in node:
@@ -95,6 +241,22 @@ class Job:
                     self._image_name = result["name"]
                 node["inputs"]["image"] = self._image_name
 
+            # send any input videos over when the completions are zero
+            # otherwise assume they are already there
+            if node["class_type"] == "SwarmInputVideo":
+                if self.completions == 0:
+                    video_path = node["inputs"]["video"]
+                    self.results[0]["input_videos"][id] = video_path
+                    file_ext = os.path.splitext(video_path)[1].lstrip(".")
+                    result = comfy_server.upload_video(
+                        node["inputs"]["video"],
+                        f"dueser.{file_ext}",
+                        image_type="input",
+                        overwrite=False,
+                    )
+                    self._video_name = result["name"]
+                node["inputs"]["video"] = self._video_name
+
         self.results[self.completions]["seed"] = self.start_seed + self.completions
         self.results[self.completions]["submitted_workflow"] = workflow
 
@@ -124,6 +286,7 @@ class JobWidget(QFrame):
         # Create main layout
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(3)
 
         hlayout = QHBoxLayout()
         hlayout.setContentsMargins(0, 0, 0, 0)
@@ -151,6 +314,45 @@ class JobWidget(QFrame):
         self.progress_bar.setValue(0)
         self.progress_bar.setFixedHeight(8)
         self.progress_bar.setTextVisible(False)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                border-radius: 2px;
+                background-color: #181818;
+                color: black;
+                border-width: 2px;
+                padding: 0px;
+                margin: 1px;
+            }
+            QProgressBar::chunk {
+                background-color: #66F;
+                border-radius: 2px;
+                border-width: 2px;
+                padding: 0px;
+            }
+        """)
+
+        # Second progress bar for elapsed time vs estimated runtime
+        self.elapsed_progress_bar = QProgressBar()
+        self.elapsed_progress_bar.setRange(0, 100)
+        self.elapsed_progress_bar.setValue(0)
+        self.elapsed_progress_bar.setFixedHeight(7)
+        self.elapsed_progress_bar.setTextVisible(False)
+        self.elapsed_progress_bar.setStyleSheet("""
+            QProgressBar {
+                border-radius: 2px;
+                background-color: #181818;
+                color: black;
+                border-width: 2px;
+                padding: 0px;
+                margin: 1px;
+            }
+            QProgressBar::chunk {
+                background-color: #FFD700;
+                border-radius: 2px;
+                border-width: 2px;
+                padding: 0px;
+            }
+        """)
 
         # Add widgets to layout
         hlayout.addWidget(self.name_label)
@@ -159,6 +361,7 @@ class JobWidget(QFrame):
         hlayout.addWidget(self.cancel_button)
         layout.addLayout(hlayout)
         layout.addWidget(self.progress_bar)
+        layout.addWidget(self.elapsed_progress_bar)
 
         # Set the layout
         self.setLayout(layout)
@@ -176,6 +379,25 @@ class JobWidget(QFrame):
 
     def set_progress(self, value):
         self.progress_bar.setValue(value * 100.0)
+
+    def set_elapsed_progress(self):
+        """Update the elapsed progress bar based on elapsed time vs estimated runtime."""
+        if not hasattr(self.job, "results") or len(self.job.results) == 0:
+            return
+
+        if 0 not in self.job.results or "start_time" not in self.job.results[0]:
+            return
+
+        try:
+            start_time = self.job.results[0]["start_time"]
+            elapsed_time = time.time() - start_time
+
+            if self.job.estimated_runtime > 0:
+                progress = min(elapsed_time / self.job.estimated_runtime, 1.0)
+                self.elapsed_progress_bar.setValue(round(progress * 100.0))
+        except (KeyError, TypeError, ValueError):
+            # Handle any errors gracefully
+            pass
 
     def mark_submitted(self):
         self.setStyleSheet(
@@ -236,7 +458,7 @@ class QueueWidget(QWidget):
 
     # Signal emitted when a result is produced
     new_file = Signal(str)
-    new_PIL_image = Signal(object)
+    new_pil_image = Signal(object)
     # Signal emitted when a job is reloaded
     reload_job = Signal(object)
     # Signal emitted when a job is selected and it has a result file to show
@@ -272,11 +494,19 @@ class QueueWidget(QWidget):
         self.queue_layout = QVBoxLayout()
         self.queue_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.queue_scroll.setLayout(self.queue_layout)
-        
+
         self.queue_scroll_area = QScrollArea()
+        self.queue_scroll_area.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
         self.queue_scroll_area.setWidgetResizable(True)
         self.queue_scroll_area.setWidget(self.queue_scroll)
-        
+
+        # Create label for total estimated runtime
+        self.total_runtime_label = QLabel("Total estimated runtime: Calculating...")
+        self.total_runtime_label.setStyleSheet("font-weight: bold; margin-bottom: 5px;")
+        self.total_runtime_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
         # Create History tab
         self.history_tab = QWidget()
         self.history_tab.setObjectName("historyTab")
@@ -286,9 +516,12 @@ class QueueWidget(QWidget):
         self.history_layout = QVBoxLayout()
         self.history_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.history_scroll.setLayout(self.history_layout)
-        
+
         self.history_scroll_area = QScrollArea()
         self.history_scroll_area.setWidgetResizable(True)
+        self.history_scroll_area.setStyleSheet(
+            "QScrollArea { border: none; } QScrollArea > QWidget { background-color: transparent; }"
+        )
         self.history_scroll_area.setWidget(self.history_scroll)
 
         # Create Stats tab
@@ -302,11 +535,16 @@ class QueueWidget(QWidget):
 
         # Add scroll areas to tabs
         queue_layout_wrapper = QVBoxLayout()
+        queue_layout_wrapper.addWidget(self.total_runtime_label)
         queue_layout_wrapper.addWidget(self.queue_scroll_area)
+        queue_layout_wrapper.setContentsMargins(0, 0, 0, 0)
+        queue_layout_wrapper.setSpacing(0)
         self.queue_tab.setLayout(queue_layout_wrapper)
-        
+
         history_layout_wrapper = QVBoxLayout()
         history_layout_wrapper.addWidget(self.history_scroll_area)
+        history_layout_wrapper.setContentsMargins(0, 0, 0, 0)
+        history_layout_wrapper.setSpacing(0)
         self.history_tab.setLayout(history_layout_wrapper)
 
         # Add tabs to the tab widget
@@ -389,6 +627,9 @@ class QueueWidget(QWidget):
                 del self._active_job_widgets[prompt_id]
                 break
 
+        # Update the total runtime label after cancellation
+        self._update_total_runtime_label()
+
     def _reload_job(self, job_widget):
         """Handle reload button click."""
         # Emit the reload signal
@@ -405,6 +646,97 @@ class QueueWidget(QWidget):
             # Emit the show_result signal
             self.show_file.emit(job_widget.job.results[0]["output_files"][0])
 
+    def _format_time(self, seconds):
+        """Format seconds into a human-readable time string (HH:MM:SS).
+
+        Args:
+            seconds (float): Time in seconds
+
+        Returns:
+            str: Formatted time string
+        """
+        if seconds < 0:
+            return "00:00:00"
+
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        seconds = int(seconds % 60)
+
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+    def _calculate_total_estimated_runtime(self):
+        """Calculate the total estimated runtime of all queued jobs.
+
+        Returns:
+            float: Total estimated runtime in seconds
+        """
+        total_runtime = 0.0
+
+        for job_widget in self._new_job_widgets:
+            total_runtime += job_widget.job.get_remaining_estimated_runtime()
+
+        return total_runtime
+
+    def _update_total_runtime_label(self):
+        """Update the label showing total estimated runtime."""
+        total_seconds = self._calculate_total_estimated_runtime()
+        formatted_time = self._format_time(total_seconds)
+
+        if len(self._new_job_widgets) == 0:
+            self.total_runtime_label.setText("Total estimated runtime: No jobs queued")
+        elif len(self._new_job_widgets) == 1:
+            self.total_runtime_label.setText(
+                f"Total estimated runtime: {formatted_time} for {len(self._new_job_widgets)} job"
+            )
+        else:
+            self.total_runtime_label.setText(
+                f"Total estimated runtime: {formatted_time} for {len(self._new_job_widgets)} jobs"
+            )
+
+    def get_performance_rate(self, name, gpu):
+        """Get the rate for a workflow and GPU from performance_data.
+
+        Args:
+            name (str): The workflow name
+            gpu (str): The GPU identifier
+
+        Returns:
+            float: The rate for this workflow and GPU, or an average if not found
+        """
+        # Check if we have performance data
+        if not performance_data:
+            return 100000.0  # Default rate, low end
+
+        # Try to get the exact match
+        if name in performance_data and gpu in performance_data[name]:
+            return performance_data[name][gpu]
+
+        # If workflow_name not found, average all entries that match the GPU
+        matching_rates = []
+        for workflow_name, gpu_data in performance_data.items():
+            if gpu in gpu_data:
+                matching_rates.append(performance_data[workflow_name][gpu])
+
+        if matching_rates:
+            return sum(matching_rates) / len(matching_rates)
+
+        # If GPU not found, average all entries that match the workflow_name
+        if name in performance_data:
+            gpu_rates = list(performance_data[name].values())
+            if gpu_rates:
+                return sum(gpu_rates) / len(gpu_rates)
+
+        # If neither is found, average all entries
+        all_rates = []
+        for workflow_data in performance_data.values():
+            all_rates.extend(workflow_data.values())
+
+        if all_rates:
+            return sum(all_rates) / len(all_rates)
+
+        # Fallback default rate
+        return 1.0
+
     def queue_job(self, workflow_name, workflow, count):
         """Queue a job with the given workflow name, workflow, and count.
 
@@ -415,6 +747,10 @@ class QueueWidget(QWidget):
         """
         # Create a QueuedWorkflow and QueuedWorkflowWidget for this job
         job = Job(workflow_name, workflow, count)
+        # todo compute the rate based on the gpu and workkflow name
+        gpu = get_gpu_from_device_string(self._current_device)
+        rate = self.get_performance_rate(workflow_name, gpu)
+        job.compute_estimated_runtime(rate)
         job_widget = JobWidget(job)
         job_widget.job_canceled.connect(self._job_canceled)
         job_widget.reload_job.connect(self._reload_job)
@@ -423,6 +759,9 @@ class QueueWidget(QWidget):
         # Add the job widget to the queue layout
         self.queue_layout.addWidget(job_widget)
         self._new_job_widgets.append(job_widget)
+
+        # Update the total runtime label
+        self._update_total_runtime_label()
 
     def _on_text_message_received(self, messagestr):
         """Handle incoming text messages."""
@@ -439,6 +778,7 @@ class QueueWidget(QWidget):
                         self._active_job_widgets[prompt_id].set_progress(
                             current_step / data["max"]
                         )
+                        self._active_job_widgets[prompt_id].set_elapsed_progress()
 
             if message["type"] == "execution_start":
                 data = message["data"]
@@ -478,6 +818,8 @@ class QueueWidget(QWidget):
                             self._old_job_widgets.append(widget)
                             self.queue_layout.removeWidget(widget)
                             self.history_layout.insertWidget(0, widget)
+                            # Update total runtime label after job completion
+                            self._update_total_runtime_label()
                         else:
                             del self._active_job_widgets[prompt_id]
                             if not active_widget.job.error:
@@ -547,7 +889,8 @@ class QueueWidget(QWidget):
             # print(metadata)
             data = bytesmessage[8 + metadata_length :]
             image = Image.open(io.BytesIO(data))
-            if hasattr(image, "n_frames") and image.n_frames > 1:
+            frames = getattr(image, "n_frames", 1)
+            if frames > 1:
                 # store as a file instead
                 dir = replace_variables_in_string("%year%-%month%-%day%")
                 if len(self._output_root):
@@ -583,6 +926,10 @@ class QueueWidget(QWidget):
                     sui_image_params[
                         node["inputs"]["title"].lower().replace(" ", "")
                     ] = job.results[0]["input_images"][id]
+                elif node["class_type"] == "SwarmInputVideo":
+                    sui_image_params[
+                        node["inputs"]["title"].lower().replace(" ", "")
+                    ] = job.results[0]["input_videos"][id]
                 else:
                     sui_image_params[
                         node["inputs"]["title"].lower().replace(" ", "")
@@ -801,12 +1148,19 @@ class QueueWidget(QWidget):
         # update stats
         self._update_stats()
 
+        # Update total runtime label
+        self._update_total_runtime_label()
+
         if len(self._new_job_widgets) < 1:
             return
 
         # make sure we are connected
         if not self._comfy_server.is_connected():
             return
+
+        # Update elapsed progress for all active jobs
+        for job_widget in self._active_job_widgets.values():
+            job_widget.set_elapsed_progress()
 
         # move to next job if ready
         if len(self._active_job_widgets) == 0 and len(self._new_job_widgets) > 0:

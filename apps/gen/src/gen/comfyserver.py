@@ -141,6 +141,24 @@ class comfyServer(QWebSocket):
         )
         return json.loads(req.data)
 
+    # def upload_video(self, input_path, name, file_type="input", overwrite=False):
+    #     """Uploads a video to ComfyUI using multipart/form-data encoding."""
+    #     with open(input_path, 'rb') as file:
+    #         multipart_data = MultipartEncoder(
+    #             fields={
+    #                 'image': (name, file, 'video/mp4'), # Use 'video/mp4' or appropriate MIME type
+    #                 'type': file_type,
+    #                 'overwrite': str(overwrite).lower()
+    #             }
+    #         )
+    #         # Send the POST request to the upload endpoint
+    #         response = requests.post(
+    #             f"http://{server_address}/upload/",
+    #             data=multipart_data,
+    #             headers={'Content-Type': multipart_data.content_type}
+    #         )
+    #         return response
+
     def upload_image(self, input_path, name, image_type="input", overwrite=False):
         with open(input_path, "rb") as file:
             file_data = file.read()
@@ -163,3 +181,49 @@ class comfyServer(QWebSocket):
                 headers=headers,
             )
             return json.loads(req.data)
+
+    def upload_video(self, input_path, name, image_type="input", overwrite=False):
+        with open(input_path, "rb") as file:
+            file_data = file.read()
+            # Build multipart form data
+            fields = {
+                "image": (name, file_data, "video/mp4"),
+                "type": image_type,
+                "overwrite": str(overwrite).lower(),
+            }
+
+            # Encode the multipart form data
+            data, content_type = encode_multipart_formdata(fields)
+
+            headers = {"Content-Type": content_type}
+
+            req = urllib3.PoolManager().request(
+                "POST",
+                "http://{}/upload/image".format(self._server_address),
+                body=data,
+                headers=headers,
+            )
+            return json.loads(req.data)
+
+    def get_all_models_available(self):
+        results = []
+        try:
+            req = urllib3.PoolManager().request(
+                "GET",
+                "http://{}/models".format(self._server_address),
+            )
+            subdirs = json.loads(req.data)
+
+            subdirs_to_check = subdirs
+            for subdir in subdirs_to_check:
+                if subdir in subdirs:
+                    req = urllib3.PoolManager().request(
+                        "GET",
+                        "http://{}/models/{}".format(self._server_address, subdir),
+                    )
+                results = results + json.loads(req.data)
+
+            return results
+        except Exception as e:
+            print(f"Error checking model availability: {e}")
+            return False

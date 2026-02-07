@@ -90,6 +90,25 @@ class DirectoryTree(QTreeView):
         # Set column width for the name column
         self.setColumnWidth(0, 80)
 
+    def __del__(self):
+        """Destructor to clean up resources and prevent memory leaks."""
+        # Clean up the proxy model first
+        if hasattr(self, '_proxy') and self._proxy is not None:
+            try:
+                # Disconnect the proxy from the source model
+                if hasattr(self._proxy, 'setSourceModel'):
+                    self._proxy.setSourceModel(None)
+            except Exception as e:
+                print(f"Error cleaning up proxy model: {e}")
+
+        # Clean up the file system model
+        if hasattr(self, '_file_system_model') and self._file_system_model is not None:
+            try:
+                # Clear the model to release resources
+                self._file_system_model.clear()
+            except Exception as e:
+                print(f"Error cleaning up file system model: {e}")
+
     def get_file_system_model(self) -> "QFileSystemModel":
         """Get the file system model.
 

@@ -5,9 +5,11 @@ fit-to-window and 1:1 scaling, as well as mouse-based navigation.
 """
 
 import os
+from typing import Optional, Union
 
 os.environ["QT_LOGGING_RULES"] = "*.debug=false;qt.multimedia.*=false"
 
+from PIL.Image import Image as PILImage
 from PIL.ImageQt import ImageQt
 from PySide6.QtCore import QPointF, Qt, Slot
 from PySide6.QtGui import (
@@ -40,7 +42,7 @@ class ImageViewer(QWidget):
     - Large scene area to handle very high resolution images
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent: Optional[QWidget] = None):
         """Initialize the ImageViewer widget.
 
         Args:
@@ -48,8 +50,8 @@ class ImageViewer(QWidget):
         """
         super().__init__(parent)
 
-        self._movie = None
-        self._image = None
+        self._movie: Optional[QMovie] = None
+        self._image: Optional[Union[QPixmap, QGraphicsProxyWidget]] = None
 
         self._transform = QTransform()
         self._image_view = QGraphicsView()
@@ -83,7 +85,7 @@ class ImageViewer(QWidget):
         # Set size policy to ensure widget is never taller than it is wide
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-    def setPILImage(self, new_image):
+    def setPILImage(self, new_image: PILImage) -> None:
         # clear any existing
         self.clear()
 
@@ -100,7 +102,7 @@ class ImageViewer(QWidget):
         self._image_view.setVisible(True)
         self.normalSize()
 
-    def setImageFile(self, new_image):
+    def setImageFile(self, new_image: str) -> None:
         """Load and display an image.
 
         Args:
@@ -208,14 +210,14 @@ class ImageViewer(QWidget):
         )
         self._image_view.setTransform(self._transform)
 
-    def resizeEvent(self, event):
+    def resizeEvent(self, event) -> None:
         """Handle resize events and adjust image scaling accordingly."""
         super().resizeEvent(event)
         # Invoke normalSize to maintain proper scaling when widget is resized
         if hasattr(self, "_image") and self._image is not None:
             self.normalSize()
 
-    def eventFilter(self, source, event):
+    def eventFilter(self, source, event) -> bool:
         """Handle scroll wheel events for zooming and mouse dragging for panning"""
         if event.type() == event.Type.Wheel:
             scroll_event = event

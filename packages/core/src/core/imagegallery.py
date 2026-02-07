@@ -8,6 +8,7 @@ import multiprocessing
 import os
 import threading
 from multiprocessing import Pool
+from typing import Any, List, Optional, Tuple
 
 from PySide6.QtCore import (
     QMimeData,
@@ -42,9 +43,9 @@ from .utils import (
 class DragLabel(QLabel):
     """A custom QLabel that supports drag and drop operations."""
 
-    thumbnailClicked = Signal(int)
+    thumbnail_clicked = Signal(int)
 
-    def __init__(self, index, parent=None):
+    def __init__(self, index: int, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.index = index
         self.setAcceptDrops(True)
@@ -61,13 +62,13 @@ class DragLabel(QLabel):
         self._highlighted = value
         self._update_border()
 
-    def set_image_path(self, image_path):
+    def set_image_path(self, image_path: str) -> None:
         # set _is_video if the file is a video
         self._is_video = is_video_file(image_path)
         self._image_path = image_path
         self._update_border()
 
-    def _update_border(self):
+    def _update_border(self) -> None:
         if self._marked:
             # Add a red checkmark overlay or change background
             self.setStyleSheet(
@@ -85,7 +86,7 @@ class DragLabel(QLabel):
             else:
                 self.setStyleSheet("border: 2px solid #608030;")
 
-    def set_marked(self, value):
+    def set_marked(self, value: bool) -> None:
         """Mark or unmark the thumbnail.
 
         Args:
@@ -94,7 +95,7 @@ class DragLabel(QLabel):
         self._marked = value
         self._update_border()
 
-    def mouseMoveEvent(self, event):
+    def mouseMoveEvent(self, event) -> None:
         """Handle mouse move events to initiate drag operations."""
         if event.buttons() != Qt.MouseButton.LeftButton:
             return
@@ -119,16 +120,18 @@ class DragLabel(QLabel):
 
         drag.exec(Qt.DropAction.CopyAction | Qt.DropAction.MoveAction)
 
-    def mousePressEvent(self, event):
+    def mousePressEvent(self, event) -> None:
         """Handle mouse press events to store the drag start position."""
         if event.button() == Qt.MouseButton.LeftButton:
             self.drag_start_position = event.pos()
-            self.thumbnailClicked.emit(self.index)
+            self.thumbnail_clicked.emit(self.index)
         else:
             super().mousePressEvent(event)
 
 
-def load_image_worker(image_path, thumbnail_size, index):
+def load_image_worker(
+    image_path: str, thumbnail_size: Tuple[int, int], index: int
+) -> Tuple[str, Any, Tuple[int, int], int]:
     """Worker function for loading images in a separate process.
 
     Args:
@@ -154,10 +157,10 @@ def load_image_worker(image_path, thumbnail_size, index):
             image.thumbnail(thumbnail_size, Image.Resampling.LANCZOS)
             return (image_path, image.convert("RGB"), image.size, index)
         else:
-            return (image_path, None, [0, 0], index)
+            return (image_path, None, (0, 0), index)
     except Exception as e:
         print(f"Error loading image {image_path}: {e}")
-        return (image_path, None, [0, 0], index)
+        return (image_path, None, (0, 0), index)
 
 
 class ImageGallery(QWidget):
@@ -173,26 +176,37 @@ class ImageGallery(QWidget):
     """
 
     # Signal emitted when a thumbnail is clicked
-    thumbnailClicked = Signal(str)
+    thumbnail_clicked = Signal(str)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent: Optional[QWidget] = None):
         """Initialize the ImageGallery widget.
 
         Args:
             parent: Parent widget (optional).
         """
         super().__init__(parent)
-        self._thread = None
+        self._thread: Optional[threading.Thread] = None
         self._request_load_cancel = False
-        self._thumbnail_widgets = []
-        self._image_paths = []
-        self._marked_files = []
+        self._thumbnail_widgets: List[DragLabel] = []
+        self._image_paths: List[str] = []
+        self._marked_files: List[str] = []
         self._current_columns = -1
         self._last_thumbnail_clicked_index = 0
-        self._thumbnail_size = [192, 192]
+        self._thumbnail_size: tuple[int, int] = (192, 192)
         # self.setStyleSheet("color: gray;")
         self._process_pool = None
         self._setup_ui()
+
+    def _cleanup_process_pool(self):
+        """Clean up the process pool if it exists."""
+        if self._process_pool is not None:
+            try:
+                self._process_pool.close()
+                self._process_pool.join()
+            except Exception as e:
+                print(f"Error cleaning up process pool: {e}")
+            finally:
+                self._process_pool = None
 
     def _setup_ui(self):
         """Set up the user interface."""
@@ -232,7 +246,7 @@ class ImageGallery(QWidget):
         self._scroll_area.setWidget(self._content_widget)
         main_layout.addWidget(self._scroll_area)
 
-    def add_image(self, file_path):
+    def add_image(self, file_path: str) -> None:
         # Get all supported files from the folder
         supported_extensions = ALL_SUPPORTED_EXTENSIONS
 
@@ -251,7 +265,7 @@ class ImageGallery(QWidget):
                 self._set_thumbnail(resized_image, size, index)
                 self._on_thumbnail_clicked(index)
 
-    def load_images_from_folder(self, folder_path):
+    def load_images_from_folder(self, folder_path: str) -> None:
         """Load and display images and videos from the specified folder.
 
         This method:
@@ -320,7 +334,7 @@ class ImageGallery(QWidget):
             for i in range(len(self._thumbnail_widgets), len(self._image_paths)):
                 # Create thumbnail widget
                 widget = DragLabel(i)
-                widget.thumbnailClicked.connect(self._on_thumbnail_clicked)
+                widget.thumbnail_clicked.connect(self._on_thumbnail_clicked)
                 self._thumbnail_widgets.append(widget)
 
     def _build_thumbnail(self, i, image_path):
@@ -368,35 +382,35 @@ class ImageGallery(QWidget):
         if not self._image_paths:
             return
 
-        # Prepare arguments for the worker function
-        image_paths = self._image_paths
+        # Clean up any existing process pool
+        self._cleanup_process_pool()
 
         # Initialize process pool if not already done
         num_processes = min(MAX_PROCESSES, multiprocessing.cpu_count() or 1)
-        process_pool = Pool(processes=num_processes)
+        self._process_pool = Pool(processes=num_processes)
 
-        # process tasks in chunks
-        chunk_size = PROCESSING_CHUNK_SIZE
-        for i in range(0, len(image_paths), chunk_size):
-            if not self._request_load_cancel:
-                chunk = image_paths[i : i + chunk_size]
-                # Submit tasks to the process pool
-                results = []
-                for j, image_path in enumerate(chunk):
-                    result = process_pool.apply_async(
-                        load_image_worker,
-                        args=(image_path, self._thumbnail_size, i + j),
-                    )
-                    results.append(result)
+        try:
+            # process tasks in chunks
+            chunk_size = PROCESSING_CHUNK_SIZE
+            for i in range(0, len(self._image_paths), chunk_size):
+                if not self._request_load_cancel:
+                    chunk = self._image_paths[i : i + chunk_size]
+                    # Submit tasks to the process pool
+                    results = []
+                    for j, image_path in enumerate(chunk):
+                        result = self._process_pool.apply_async(
+                            load_image_worker,
+                            args=(image_path, self._thumbnail_size, i + j),
+                        )
+                        results.append(result)
 
-                # Process results as they become available
-                for result in results:
-                    image_path, resized_image, size, index = result.get()
-                    self._set_thumbnail(resized_image, size, index)
-
-        # cleanup
-        process_pool.close()
-        process_pool.join()
+                    # Process results as they become available
+                    for result in results:
+                        image_path, resized_image, size, index = result.get()
+                        self._set_thumbnail(resized_image, size, index)
+        finally:
+            # Ensure cleanup happens even if there's an exception
+            self._cleanup_process_pool()
 
     def _display_thumbnails(self):
         """Display thumbnails for all loaded images."""
@@ -426,7 +440,7 @@ class ImageGallery(QWidget):
             else:
                 self._thumbnail_widgets[i].hide()
 
-    def _on_filter_text_changed(self, text):
+    def _on_filter_text_changed(self, text: str) -> None:
         """Handle filter text changed event.
 
         Args:
@@ -435,7 +449,7 @@ class ImageGallery(QWidget):
         # Apply filtering to the image paths
         self._display_thumbnails()
 
-    def show_image(self, filename):
+    def show_image(self, filename: str) -> bool:
         if not self._image_paths:
             return False
 
@@ -443,9 +457,10 @@ class ImageGallery(QWidget):
         for idx, path in enumerate(self._image_paths):
             if path == filename and not self._thumbnail_widgets[idx].isHidden():
                 self._on_thumbnail_clicked(idx)
-                return
+                return True
+        return False
 
-    def _show_first_visible_thumbnail(self):
+    def _show_first_visible_thumbnail(self) -> bool:
         if not self._image_paths:
             return False
 
@@ -463,11 +478,11 @@ class ImageGallery(QWidget):
             return True
         return False
 
-    def _on_thumbnail_clicked(self, index):
+    def _on_thumbnail_clicked(self, index: int) -> None:
         """Handle thumbnail click event.
 
         Args:
-            image_path (str): Path to the clicked image file.
+            index (int): Index of the clicked thumbnail.
         """
         self._thumbnail_widgets[self._last_thumbnail_clicked_index].set_highlighted(
             False
@@ -481,9 +496,9 @@ class ImageGallery(QWidget):
         self._scroll_to_thumbnail(index)
 
         # Emit signal with the image path
-        self.thumbnailClicked.emit(self._image_paths[index])
+        self.thumbnail_clicked.emit(self._image_paths[index])
 
-    def _scroll_to_thumbnail(self, index):
+    def _scroll_to_thumbnail(self, index: int) -> None:
         """Scroll the scroll area to make the specified thumbnail visible.
 
         Args:
@@ -502,7 +517,7 @@ class ImageGallery(QWidget):
         # This handles all the coordinate calculations automatically
         self._scroll_area.ensureWidgetVisible(thumbnail_widget, 0, 0)
 
-    def next_thumbnail(self):
+    def next_thumbnail(self) -> bool:
         """Navigate to the next thumbnail in the gallery.
 
         Returns:
@@ -529,7 +544,7 @@ class ImageGallery(QWidget):
 
         return False
 
-    def previous_thumbnail(self):
+    def previous_thumbnail(self) -> bool:
         """Navigate to the previous thumbnail in the gallery.
 
         Returns:
@@ -575,7 +590,7 @@ class ImageGallery(QWidget):
         if columns != self._current_columns and self._image_paths:
             self._display_thumbnails()
 
-    def get_image_paths(self):
+    def get_image_paths(self) -> List[str]:
         """Get the list of image paths currently loaded.
 
         Returns:
@@ -583,7 +598,7 @@ class ImageGallery(QWidget):
         """
         return self._image_paths.copy()
 
-    def get_current_file_path(self):
+    def get_current_file_path(self) -> Optional[str]:
         """Get the path of the currently selected thumbnail.
 
         Returns:
@@ -593,7 +608,7 @@ class ImageGallery(QWidget):
             return None
         return self._image_paths[self._last_thumbnail_clicked_index]
 
-    def mark_current_file(self, value):
+    def mark_current_file(self, value: bool) -> bool:
         """Mark the currently selected thumbnail.
 
         Returns:
@@ -742,7 +757,7 @@ class ImageGallery(QWidget):
                     f"Successfully deleted {deleted_count} file(s).",
                 )
 
-    def set_thumbnail_size(self, size):
+    def set_thumbnail_size(self, size: Tuple[int, int]) -> None:
         """Set the size for thumbnails.
 
         Args:
@@ -752,11 +767,12 @@ class ImageGallery(QWidget):
         # Reload thumbnails with new size
         if self._image_paths:
             # Clear existing process pool before reloading
-            if self._process_pool is not None:
-                self._process_pool.close()
-                self._process_pool.join()
-                self._process_pool = None
+            self._cleanup_process_pool()
             self.load_images_from_folder(os.path.dirname(self._image_paths[0]))
+
+    def __del__(self):
+        """Destructor to clean up resources."""
+        self._cleanup_process_pool()
 
     def clear_images(self):
         """Clear all images from the gallery.
@@ -781,3 +797,6 @@ class ImageGallery(QWidget):
 
         # Clear the content layout
         self._clear_thumbnails()
+
+        # Clean up process pool
+        self._cleanup_process_pool()

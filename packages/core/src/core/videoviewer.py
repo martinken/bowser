@@ -5,6 +5,7 @@ navigation, frame capture, and metadata display capabilities.
 """
 
 import os
+from typing import Optional
 
 from PySide6.QtCore import QUrl
 from PySide6.QtMultimedia import QAudioOutput, QMediaMetaData, QMediaPlayer, QVideoSink
@@ -20,10 +21,8 @@ from PySide6.QtWidgets import (
 
 from .utils import (
     DEFAULT_FRAME_RATE,
-    DEFAULT_VOLUME,
     SUPPORTED_VIDEO_EXTENSIONS,
     get_frame_filename,
-    get_swarm_json_path,
 )
 
 
@@ -40,7 +39,7 @@ class VideoViewer(QWidget):
     - Audio output with volume control
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent: Optional[QWidget] = None):
         """Initialize the VideoViewer widget.
 
         Args:
@@ -108,7 +107,7 @@ class VideoViewer(QWidget):
         # Connect video sink signal for frame capture
         self.videoSink.videoFrameChanged.connect(self.handleVideoFrameChanged)
 
-    def loadVideo(self, video_path):
+    def loadVideo(self, video_path: str) -> bool:
         """Load and prepare a video file for playback.
 
         This method:
@@ -140,19 +139,19 @@ class VideoViewer(QWidget):
 
         return True
 
-    def play(self):
+    def play(self) -> None:
         """Start or resume playback of the loaded video."""
         self.mediaPlayer.play()
 
-    def pause(self):
+    def pause(self) -> None:
         """Pause playback of the video."""
         self.mediaPlayer.pause()
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop playback and reset the video."""
         self.mediaPlayer.stop()
 
-    def prevFrame(self):
+    def prevFrame(self) -> None:
         """Move to previous frame (pause if playing)."""
         # Pause playback if it's playing
         if self.mediaPlayer.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
@@ -165,7 +164,7 @@ class VideoViewer(QWidget):
         new_pos = max(0, current_pos - frame_duration_ms)
         self.mediaPlayer.setPosition(new_pos)
 
-    def nextFrame(self):
+    def nextFrame(self) -> None:
         """Move to next frame (pause if playing)."""
         # Pause playback if it's playing
         if self.mediaPlayer.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
@@ -181,7 +180,7 @@ class VideoViewer(QWidget):
         if new_pos < self.mediaPlayer.duration():
             self.mediaPlayer.setPosition(new_pos)
 
-    def handleMediaStatusChanged(self, status):
+    def handleMediaStatusChanged(self, status) -> None:
         """Handle media player status changes.
 
         Args:
@@ -195,7 +194,7 @@ class VideoViewer(QWidget):
         elif status == QMediaPlayer.MediaStatus.EndOfMedia:
             self.statusLabel.setText("Playback completed (will loop)")
 
-    def handleError(self, error, errorString):
+    def handleError(self, error, errorString) -> None:
         """Handle media player errors.
 
         Args:
@@ -204,7 +203,7 @@ class VideoViewer(QWidget):
         """
         self.statusLabel.setText(f"Error: {errorString}")
 
-    def setVolume(self, volume):
+    def setVolume(self, volume: int) -> None:
         """Set the audio volume.
 
         Args:
@@ -212,7 +211,7 @@ class VideoViewer(QWidget):
         """
         self.audioOutput.setVolume(volume / 100.0)
 
-    def setFullScreen(self, fullScreen):
+    def setFullScreen(self, fullScreen: bool) -> None:
         """Toggle full screen mode.
 
         Args:
@@ -223,7 +222,7 @@ class VideoViewer(QWidget):
         else:
             self.videoWidget.setFullScreen(False)
 
-    def handlePositionChanged(self, position):
+    def handlePositionChanged(self, position: int) -> None:
         """Handle position changes during playback.
 
         Args:
@@ -241,7 +240,7 @@ class VideoViewer(QWidget):
                 f"({position / 1000:.1f}s/{self.mediaPlayer.duration() / 1000:.1f}s)"
             )
 
-    def getFrameRate(self):
+    def getFrameRate(self) -> float:
         """Get the frame rate from media metadata, or return default.
 
         Returns:
@@ -254,7 +253,7 @@ class VideoViewer(QWidget):
             return fps
         return DEFAULT_FRAME_RATE
 
-    def handleDurationChanged(self, duration):
+    def handleDurationChanged(self, duration: int) -> None:
         """Handle duration changes when media is loaded.
 
         Args:
@@ -271,12 +270,12 @@ class VideoViewer(QWidget):
                 f"({total_frames} frames @ {fps}fps, {duration / 1000:.1f}s)"
             )
 
-    def hide(self):
+    def hide(self) -> None:
         """Override hide to stop playback before hiding the widget."""
         self.stop()
         super().hide()
 
-    def captureFrame(self):
+    def captureFrame(self) -> None:
         """Capture the current video frame.
 
         Returns:
@@ -287,14 +286,14 @@ class VideoViewer(QWidget):
         self.prevFrame()
         self.nextFrame()
 
-        # set the video sink
+        # save the old video sink, it will get restored in handleVideoFrameChanged
         self._old_video_sink = self.mediaPlayer.videoSink()
         self.mediaPlayer.setVideoSink(self.videoSink)
 
         # play a frame
         self.nextFrame()
 
-    def handleVideoFrameChanged(self, frame):
+    def handleVideoFrameChanged(self, frame) -> None:
         """Handle video frame changes from the video sink.
 
         Args:

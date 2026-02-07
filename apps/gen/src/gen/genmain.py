@@ -175,13 +175,14 @@ class GenMain(QMainWindow):
         self.queue_widget.new_file.connect(self.got_new_file)
         self.queue_widget.show_file.connect(self.got_show_file)
         self.queue_widget.reload_job.connect(self._reload_job)
-        self.queue_widget.new_PIL_image.connect(self.got_new_image)
+        self.queue_widget.new_pil_image.connect(self.got_new_image)
 
         # Image gallery
         self._image_gallery = ImageGallery()
+        self._image_gallery.setStyleSheet("border: 0px;")
 
         # Connect thumbnail clicked signal
-        self._image_gallery.thumbnailClicked.connect(self._on_thumbnail_clicked)
+        self._image_gallery.thumbnail_clicked.connect(self._on_thumbnail_clicked)
 
         # Image Video Viewer (handles both image and video viewing)
         self._image_video_viewer = ImageVideoViewer()
@@ -227,7 +228,7 @@ class GenMain(QMainWindow):
         # Get screen size and calculate 60% of it
         screen_size = QGuiApplication.primaryScreen().availableSize()
         new_width = int(screen_size.width() * 3 / 5)
-        new_height = int(screen_size.height() * 3 / 5)
+        new_height = int(screen_size.height() * 4 / 5)
         self.resize(new_width, new_height)
 
         # If workflow_root is set, open it as workflows directory

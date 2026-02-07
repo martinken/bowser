@@ -190,10 +190,10 @@ class ViewMain(QMainWindow):
 
         # 2. Image gallery
         self._image_gallery = ImageGallery()
-        self._image_gallery.setStyleSheet("border: 1px solid gray;")
+        self._image_gallery.setStyleSheet("border: 1px solid #181818;")
 
         # Connect thumbnail clicked signal
-        self._image_gallery.thumbnailClicked.connect(self._on_thumbnail_clicked)
+        self._image_gallery.thumbnail_clicked.connect(self._on_thumbnail_clicked)
 
         # 3. Image Video Viewer (handles both image and video viewing)
         self._image_video_viewer = ImageVideoViewer()

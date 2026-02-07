@@ -1,5 +1,6 @@
 import json
 import os
+from typing import Any, Dict, List, Optional, Union
 
 from PIL import Image
 from PIL.ExifTags import TAGS
@@ -18,7 +19,7 @@ class MetadataHandler:
     """
 
     # Class constant for field configuration
-    field_config = {
+    field_config: Dict[str, Dict[str, Union[List[str], str, Any]]] = {
         "Seed": {"keys": ["seed"], "default": "", "convert": str},
         "File": {"keys": ["file"], "default": ""},
         "InImage": {
@@ -40,10 +41,10 @@ class MetadataHandler:
         },
     }
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the MetadataHandler."""
         # Build values_to_extract from field_config keys
-        self.values_to_extract = []
+        self.values_to_extract: List[str] = []
         for field_config_dict in self.field_config.values():
             self.values_to_extract.extend(field_config_dict["keys"])
 
@@ -62,8 +63,8 @@ class MetadataHandler:
         )
 
     @classmethod
-    def flatten(cls, adict):
-        results = {}
+    def flatten(cls, adict: Dict[str, Any]) -> Dict[str, Any]:
+        results: Dict[str, Any] = {}
         for key, value in adict.items():
             if type(value) is dict:
                 results = results | cls.flatten(value)
@@ -72,7 +73,9 @@ class MetadataHandler:
         return results
 
     @classmethod
-    def find_metadata_for_key(cls, input_key, values):
+    def find_metadata_for_key(
+        cls, input_key: str, values: Dict[str, Any]
+    ) -> Optional[Any]:
         key = input_key.lower().replace(" ", "")
 
         # Try to match metadata values to node widgets
@@ -89,7 +92,7 @@ class MetadataHandler:
 
         return None
 
-    def load_file_metadata(self, file_path):
+    def load_file_metadata(self, file_path: str) -> Dict[str, Any]:
         """Load and process metadata from an image or video file.
 
         This method automatically detects whether the file is an image or video
@@ -110,7 +113,7 @@ class MetadataHandler:
         else:
             return self._load_image_metadata(file_path)
 
-    def _load_image_metadata(self, image_path):
+    def _load_image_metadata(self, image_path: str) -> Dict[str, Any]:
         """Load and process metadata from an image file.
 
         Args:
@@ -125,7 +128,7 @@ class MetadataHandler:
         try:
             with Image.open(image_path) as img:
                 # Get basic image info
-                metadata = {}
+                metadata: Dict[str, Any] = {}
                 metadata["file"] = os.path.basename(image_path)
                 metadata["format"] = img.format
                 metadata["width"] = img.size[0]
@@ -135,31 +138,34 @@ class MetadataHandler:
                 # Get EXIF data
                 if hasattr(img, "_getexif"):
                     exif_data = img.getexif()
-                    exif_result = {}
+                    exif_result: Dict[str, Any] = {}
                     if exif_data is not None:
                         for tag_id, value in exif_data.items():
-                            tag_name = TAGS.get(tag_id, tag_id)
+                            tag_name = TAGS.get(tag_id, str(tag_id))
                             exif_result[tag_name] = {value}
                     metadata["EXIF"] = exif_result
 
                 # Get all metadata (including non-EXIF)
                 all_metadata = img.info
                 if all_metadata:
-                    other_data = {}
+                    other_data: Dict[str, Any] = {}
                     for key, value in all_metadata.items():
                         # Skip binary data and sets
-                        if isinstance(value, (bytes, bytearray)):
-                            other_data[key] = "[Binary data]"
-                        else:
-                            other_data[key] = value
+                        if type(key) is str:
+                            if isinstance(value, (bytes, bytearray)):
+                                other_data[key] = "[Binary data]"
+                            else:
+                                other_data[key] = value
                     metadata["Other Data"] = other_data
 
-                return self._expand_metadata(metadata)
+                return self._expand_metadata(
+                    metadata, max_length=1000, max_json_length=1000000
+                )
 
         except Exception as e:
             return {"error": f"Error loading metadata: {str(e)}"}
 
-    def _load_video_metadata(self, video_path):
+    def _load_video_metadata(self, video_path: str) -> Dict[str, Any]:
         """Load and process metadata from a video file.
 
         Args:
@@ -168,7 +174,7 @@ class MetadataHandler:
         Returns:
             dict: The processed metadata dictionary.
         """
-        metadata = {}
+        metadata: Dict[str, Any] = {}
         metadata["File"] = os.path.basename(video_path)
         metadata["Path"] = video_path
 
@@ -182,9 +188,11 @@ class MetadataHandler:
             except Exception as e:
                 metadata["SwarmJSON"] = f"Error reading swarm.json: {str(e)}"
 
-        return self._expand_metadata(metadata)
+        return self._expand_metadata(metadata, max_length=1000, max_json_length=1000000)
 
-    def _expand_metadata(self, data, max_length=1000):
+    def _expand_metadata(
+        self, data: Any, max_length: int = 1000, max_json_length: int = 1000000
+    ) -> Any:
         """Recursively expand and normalize metadata structures.
 
         This method handles nested structures, sets, lists, and strings,
@@ -193,13 +201,15 @@ class MetadataHandler:
         Args:
             data: The metadata to expand (can be dict, list, set, str, etc.)
             max_length: Maximum length for string values
+            max_json_length: Maximum length for strings to attempt JSON parsing (security)
+                            Default is 1,000,000 characters (approximately 1MB)
 
         Returns:
             dict: Expanded metadata
         """
+        result: Dict[Any, Any] = {}
         if isinstance(data, dict):
             # Recursively process each item and merge the results
-            result = {}
             for key, value in data.items():
                 result[key] = self._expand_metadata(value, max_length)
             return result
@@ -208,7 +218,6 @@ class MetadataHandler:
             if len(data) == 1:
                 return self._expand_metadata(data[0], max_length)
             # Recursively process each item and merge the results
-            result = {}
             for i, value in enumerate(data):
                 result[i] = self._expand_metadata(value, max_length)
             return result
@@ -217,18 +226,25 @@ class MetadataHandler:
             if len(data) == 1:
                 return self._expand_metadata(next(iter(data), None), max_length)
             # Recursively process each item and merge the results
-            result = {}
             for i, value in enumerate(data):
                 result[i] = self._expand_metadata(value, max_length)
             return result
         elif isinstance(data, (bytes, bytearray)):
             return "[Binary data]"
         elif isinstance(data, str):
+            # Security check: only attempt JSON parsing on reasonably sized strings
+            if len(data) > max_json_length:
+                # String is too long to safely parse as JSON
+                value = data
+                if len(data) > max_length:
+                    value = data[:max_length] + "..."
+                return value
+
             # Check if the string is itself a JSON structure
             try:
                 # Try to parse as JSON
                 parsed_value = json.loads(data)
-                return self._expand_metadata(parsed_value)
+                return self._expand_metadata(parsed_value, max_length, max_json_length)
             except (json.JSONDecodeError, TypeError):
                 # If JSON parsing fails, treat as plain string
                 value = data
@@ -239,7 +255,7 @@ class MetadataHandler:
             return data
         return str(data)
 
-    def extract_values_from_metadata(self, metadata):
+    def extract_values_from_metadata(self, metadata: Dict[str, Any]) -> Dict[str, str]:
         """Extract specific values from metadata for display in dedicated fields.
 
         Args:
@@ -248,7 +264,7 @@ class MetadataHandler:
         Returns:
             dict: Dictionary of extracted values with keys matching values_to_extract.
         """
-        extracted_values = {}
+        extracted_values: Dict[str, str] = {}
 
         # Traverse the metadata looking for values_to_extract
         self._traverse_and_extract(metadata, self.values_to_extract, extracted_values)
@@ -258,7 +274,9 @@ class MetadataHandler:
 
         return extracted_values
 
-    def _traverse_and_extract(self, data, keys_to_find, extracted_values):
+    def _traverse_and_extract(
+        self, data: Any, keys_to_find: List[str], extracted_values: Dict[str, str]
+    ) -> None:
         """Recursively traverse metadata and extract specific key-value pairs.
 
         Args:
@@ -280,7 +298,7 @@ class MetadataHandler:
                 self._traverse_and_extract(item, keys_to_find, extracted_values)
         # For primitive types (str, int, float, etc.), do nothing
 
-    def _clean_extracted_values(self, extracted_values):
+    def _clean_extracted_values(self, extracted_values: Dict[str, str]) -> None:
         """Clean and enhance extracted values, particularly for the Size field.
 
         This method constructs a human-readable Size string based on available
@@ -317,7 +335,7 @@ class MetadataHandler:
             # Join all parts with spaces
             extracted_values["size"] = " ".join(size_parts)
 
-    def get_field_value(self, field_name, extracted_values):
+    def get_field_value(self, field_name: str, extracted_values: Dict[str, str]) -> str:
         """Get the value for a specific field based on configuration.
 
         Args:

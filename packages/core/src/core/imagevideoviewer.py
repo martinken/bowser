@@ -1,5 +1,7 @@
 """ImageVideoViewer class that handles both image and video viewing functionality."""
 
+from typing import Optional
+
 from PySide6.QtWidgets import QHBoxLayout, QPushButton, QVBoxLayout, QWidget
 
 from .imageviewer import ImageViewer
@@ -16,7 +18,7 @@ class ImageVideoViewer(QWidget):
     managing the viewer widgets, and handling navigation between them.
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent: Optional[QWidget] = None):
         """Initialize the ImageVideoViewer.
 
         Args:
@@ -74,7 +76,7 @@ class ImageVideoViewer(QWidget):
         self._image_viewer.show()
         self._image_viewer.setPILImage(image)
 
-    def display_file(self, file_path):
+    def display_file(self, file_path: str) -> None:
         # Check file extension to determine if it's an image or video
         if is_video_file(file_path):
             # Handle video files
@@ -83,7 +85,7 @@ class ImageVideoViewer(QWidget):
             # Handle image files
             self.display_image_file(file_path)
 
-    def display_image_file(self, image_path):
+    def display_image_file(self, image_path: str) -> None:
         """Display an image file in the ImageViewer widget.
 
         Args:
@@ -93,7 +95,7 @@ class ImageVideoViewer(QWidget):
         self._image_viewer.show()
         self._image_viewer.setImageFile(image_path)
 
-    def display_video_file(self, video_path):
+    def display_video_file(self, video_path: str) -> None:
         """Display a video file in the VideoViewer widget.
 
         Args:
@@ -104,15 +106,15 @@ class ImageVideoViewer(QWidget):
         self._video_viewer.loadVideo(video_path)
         self._video_viewer.play()
 
-    def _on_one_to_one_clicked(self):
+    def _on_one_to_one_clicked(self) -> None:
         """Handle 1:1 button click event."""
         self._image_viewer.fullSize()
 
-    def _on_fit_clicked(self):
+    def _on_fit_clicked(self) -> None:
         """Handle Fit button click event."""
         self._image_viewer.normalSize()
 
-    def connect_previous_button(self, slot):
+    def connect_previous_button(self, slot) -> None:
         """Connect the Previous button to a slot.
 
         Args:
@@ -120,7 +122,7 @@ class ImageVideoViewer(QWidget):
         """
         self._previous_button.clicked.connect(slot)
 
-    def connect_next_button(self, slot):
+    def connect_next_button(self, slot) -> None:
         """Connect the Next button to a slot.
 
         Args:
@@ -128,7 +130,7 @@ class ImageVideoViewer(QWidget):
         """
         self._next_button.clicked.connect(slot)
 
-    def connect_mark_file_button(self, slot):
+    def connect_mark_file_button(self, slot) -> None:
         """Connect the Mark File button to a slot.
 
         Args:
@@ -136,7 +138,7 @@ class ImageVideoViewer(QWidget):
         """
         self._mark_file_button.clicked.connect(slot)
 
-    def get_image_viewer(self):
+    def get_image_viewer(self) -> ImageViewer:
         """Get the ImageViewer instance.
 
         Returns:
@@ -144,7 +146,7 @@ class ImageVideoViewer(QWidget):
         """
         return self._image_viewer
 
-    def get_video_viewer(self):
+    def get_video_viewer(self) -> VideoViewer:
         """Get the VideoViewer instance.
 
         Returns:

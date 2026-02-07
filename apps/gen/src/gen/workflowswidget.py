@@ -6,9 +6,12 @@ Contains a QTabWidget with Workflows and Settings tabs.
 import copy
 import json
 import os
+from typing import Optional
 
+import cv2
+import numpy as np
 from core.metadatahandler import MetadataHandler
-from core.utils import check_int
+from core.utils import check_int, get_swarm_preview_path, is_video_file
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QImage, QPixmap, QTextOption
 from PySide6.QtWidgets import (
@@ -18,6 +21,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QSizePolicy,
     QSlider,
@@ -30,6 +34,66 @@ from PySide6.QtWidgets import (
 )
 
 from .comfyserver import comfyServer
+
+
+class WorkflowsTreeWidgetItem(QTreeWidgetItem):
+    """
+    Custom QTreeWidgetItem subclass for workflows that adds full_path and is_populated members.
+
+    This item extends QTreeWidgetItem to include additional attributes for managing
+    workflow file paths and lazy loading state.
+    """
+
+    def __init__(self, parent: QTreeWidget, strings: list[str]):
+        super().__init__(parent, strings)
+        # Initialize custom attributes
+        self.full_path: Optional[str] = None
+        self.is_populated: bool = False
+
+
+def numpy_to_qimage(image_array):
+    """
+    Converts a 2D or 3D numpy array to a QImage.
+    Assumes uint8 data type and 'C' memory order.
+    """
+    height, width = image_array.shape[:2]
+
+    if len(image_array.shape) == 2:
+        # Grayscale image
+        bytes_per_line = width
+        # Ensure array is contiguous in memory
+        image_array = np.require(image_array, np.uint8, "C")
+        q_image_format = QImage.Format.Format_Grayscale8
+
+        q_image = QImage(
+            image_array.data, width, height, bytes_per_line, q_image_format
+        )
+
+    elif len(image_array.shape) == 3 and image_array.shape[2] == 3:
+        # RGB image
+        bytes_per_line = 3 * width
+        # OpenCV reads in BGR, so swap to RGB
+        # If your array is already RGB, skip the swap
+        image_array = cv2.cvtColor(image_array, cv2.COLOR_BGR2RGB)
+        image_array = np.require(image_array, np.uint8, "C")
+        q_image_format = QImage.Format.Format_RGB888
+        q_image = QImage(
+            image_array.data, width, height, bytes_per_line, q_image_format
+        )
+
+    elif len(image_array.shape) == 3 and image_array.shape[2] == 4:
+        # RGBA image
+        bytes_per_line = 4 * width
+        image_array = np.require(image_array, np.uint8, "C")
+        q_image_format = QImage.Format.Format_RGBA8888
+        q_image = QImage(
+            image_array.data, width, height, bytes_per_line, q_image_format
+        )
+
+    else:
+        raise ValueError("Unsupported NumPy array shape or number of channels")
+
+    return q_image
 
 
 class NodeWidget(QWidget):
@@ -45,6 +109,8 @@ class NodeWidget(QWidget):
         self.node_data = node_data
         self.id = id
         self._type = None
+        self.input_width = 0
+        self.input_height = 0
 
         if "inputs" not in node_data or "title" not in node_data["inputs"]:
             return
@@ -195,9 +261,11 @@ class NodeWidget(QWidget):
             layout.addWidget(combo_box)
             self.setLayout(layout)
 
-        if node_data["class_type"] == "SwarmInputImage":
+        if (
+            node_data["class_type"] == "SwarmInputImage"
+            or node_data["class_type"] == "SwarmInputVideo"
+        ):
             # Create a horizontal layout with title, button, filename on left and thumbnail on right
-            self._type = "image"
             layout = QHBoxLayout()
             layout.setContentsMargins(0, 0, 0, 0)
             layout.setSpacing(10)
@@ -219,7 +287,6 @@ class NodeWidget(QWidget):
             # Create a "Choose File" button
             choose_file_button = QPushButton("Choose File")
             choose_file_button.setStyleSheet("font-size: 14px;")
-            choose_file_button.clicked.connect(lambda: self._choose_image_file())
             left_layout.addWidget(choose_file_button)
 
             # Create a label to display the filename
@@ -247,9 +314,18 @@ class NodeWidget(QWidget):
 
             # Set initial value if it exists
             if "image" in inputs and len(inputs["image"]):
+                self._type = "image"
                 self._value = inputs["image"]
                 # Try to load and display the thumbnail
                 self._load_thumbnail(inputs["image"])
+                choose_file_button.clicked.connect(lambda: self._choose_image_file())
+
+            if "video" in inputs and len(inputs["video"]):
+                self._type = "video"
+                self._value = inputs["video"]
+                # Try to load and display the thumbnail
+                self._load_thumbnail(inputs["video"])
+                choose_file_button.clicked.connect(lambda: self._choose_video_file())
 
             self.setLayout(layout)
 
@@ -274,6 +350,24 @@ class NodeWidget(QWidget):
             label.setText(str(round(val, 8)))
             self._value = round(val, 8)
 
+    def _choose_video_file(self):
+        """Open a file dialog to select an video file."""
+        # Open file dialog to select an video file
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Video File",
+            "",
+            "Video Files (*.mov *.mp4)",
+        )
+
+        if file_path:
+            # Set the value to the file path
+            self._value = file_path
+            # Update the filename label
+            self._filename_label.setText(os.path.basename(file_path))
+            # Load and display the thumbnail
+            self._load_thumbnail(file_path)
+
     def _choose_image_file(self):
         """Open a file dialog to select an image file."""
         # Open file dialog to select an image file
@@ -294,31 +388,57 @@ class NodeWidget(QWidget):
 
     def _load_thumbnail(self, file_path):
         """Load and display a thumbnail of the image."""
+        if len(file_path) <= 0 or not os.path.exists(file_path):
+            return
+
+        image = None
         try:
             # Load the image
-            if len(file_path) > 0 and os.path.exists(file_path):
+            if is_video_file(file_path):
+                preview_path = get_swarm_preview_path(file_path)
+                if len(preview_path) > 0 and os.path.exists(preview_path):
+                    image = QImage(preview_path)
+                    if image.isNull():
+                        raise ValueError("Could not load image")
+                else:
+                    # Use cv2 to grab first frame from the video
+                    # Open the video file
+                    cap = cv2.VideoCapture(file_path)
+                    if cap.isOpened():
+                        # Read the first frame
+                        ret, frame = cap.read()
+                        cap.release()
+                        if ret and frame is not None:
+                            image = numpy_to_qimage(frame)
+            else:
                 image = QImage(file_path)
                 if image.isNull():
                     raise ValueError("Could not load image")
 
-                # Get image dimensions
-                width = image.width()
-                height = image.height()
+            if image is None:
+                return
 
-                # Update dimensions label
-                if hasattr(self, "_dimensions_label"):
-                    self._dimensions_label.setText(f"{width} × {height} px")
+            # Get image dimensions
+            self.input_width = image.width()
+            self.input_height = image.height()
 
-                # Scale to 128x128 while maintaining aspect ratio
-                pixmap = QPixmap.fromImage(image).scaled(
-                    128,
-                    128,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
+            # Update dimensions label
+            if hasattr(self, "_dimensions_label"):
+                self._dimensions_label.setText(
+                    f"{self.input_width} × {self.input_height} px"
                 )
 
-                # Display the thumbnail
-                self._thumbnail_label.setPixmap(pixmap)
+            # Scale to 128x128 while maintaining aspect ratio
+            pixmap = QPixmap.fromImage(image).scaled(
+                128,
+                128,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+
+            # Display the thumbnail
+            self._thumbnail_label.setPixmap(pixmap)
+
         except Exception as e:
             print(f"Error loading thumbnail: {e}")
             # Show error message in the thumbnail area
@@ -334,7 +454,7 @@ class NodeWidget(QWidget):
 
     def dragEnterEvent(self, event):
         """Handle drag enter event."""
-        if self._type == "image":
+        if self._type == "image" or self._type == "video":
             if event.mimeData().hasUrls():
                 event.acceptProposedAction()
         else:
@@ -342,7 +462,7 @@ class NodeWidget(QWidget):
 
     def dropEvent(self, event):
         """Handle drop event."""
-        if self._type == "image":
+        if self._type == "image" or self._type == "video":
             if event.mimeData().hasUrls():
                 event.acceptProposedAction()
                 # Handle the dropped files
@@ -363,9 +483,15 @@ class NodeWidget(QWidget):
                 url = urls[0]
                 # Convert to local file path
                 file_path = url.toLocalFile()
-                # Check if it's an image file
-                if file_path.lower().endswith(
-                    (".png", ".jpg", ".jpeg", ".bmp", ".webp")
+                # Check if it's an image file or video respectively
+                if (
+                    self._type == "image"
+                    and file_path.lower().endswith(
+                        (".png", ".jpg", ".jpeg", ".bmp", ".webp")
+                    )
+                ) or (
+                    self._type == "video"
+                    and file_path.lower().endswith((".mp4", ".mov"))
                 ):
                     # Set the value to the file path
                     self._value = file_path
@@ -494,7 +620,7 @@ class WorkflowsWidget(QWidget):
                 else "workflows"
             )
             # Show message directly in tree
-            root = QTreeWidgetItem(
+            root = WorkflowsTreeWidgetItem(
                 self.workflows_tree, [f"{root_name} (no JSON files)"]
             )
             root.setChildIndicatorPolicy(
@@ -519,7 +645,9 @@ class WorkflowsWidget(QWidget):
                 # Add JSON files directly to the tree
                 for filename in filenames:
                     if filename.endswith(".json"):
-                        file_item = QTreeWidgetItem(self.workflows_tree, [filename])
+                        file_item = WorkflowsTreeWidgetItem(
+                            self.workflows_tree, [filename]
+                        )
                         file_item.setChildIndicatorPolicy(
                             QTreeWidgetItem.ChildIndicatorPolicy.DontShowIndicatorWhenChildless
                         )
@@ -545,9 +673,9 @@ class WorkflowsWidget(QWidget):
             dirname = os.path.basename(dirpath)
             if parent_item is None:
                 # Add as top-level item
-                dir_item = QTreeWidgetItem(self.workflows_tree, [dirname])
+                dir_item = WorkflowsTreeWidgetItem(self.workflows_tree, [dirname])
             else:
-                dir_item = QTreeWidgetItem(parent_item, [dirname])
+                dir_item = WorkflowsTreeWidgetItem(parent_item, [dirname])
 
             dir_item.setChildIndicatorPolicy(
                 QTreeWidgetItem.ChildIndicatorPolicy.ShowIndicator
@@ -620,7 +748,7 @@ class WorkflowsWidget(QWidget):
 
             # Add JSON files as children
             for filename in json_files:
-                file_item = QTreeWidgetItem(item, [filename])
+                file_item = WorkflowsTreeWidgetItem(item, [filename])
                 file_item.setChildIndicatorPolicy(
                     QTreeWidgetItem.ChildIndicatorPolicy.DontShowIndicatorWhenChildless
                 )
@@ -677,10 +805,31 @@ class WorkflowsWidget(QWidget):
         # Load and parse the JSON file
         try:
             with open(file_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                workflow = json.load(f)
+
+                # Check the workflow to make sure the models are all available
+                missing_models = self._check_workflow_models(workflow)
+
+                if missing_models:
+                    missing_models_str = ", ".join(missing_models)
+                    print(
+                        f"Error: The following models are not available on the ComfyUI server: {missing_models_str}"
+                    )
+                    # Show a user-friendly error dialog
+                    QMessageBox.critical(
+                        self,
+                        "Missing Models",
+                        f"The following models are not available on the ComfyUI server:\n\n{missing_models_str}\n\n"
+                        "Please ensure these models are installed in your ComfyUI models directory.",
+                        QMessageBox.StandardButton.Ok,
+                    )
+                    return workflow
+
+                return workflow
 
         except Exception as e:
             print(f"Error loading workflow {file_path}: {e}")
+
         return {}
 
     def _load_workflow_by_name(self, workflow_name):
@@ -867,10 +1016,9 @@ class WorkflowsWidget(QWidget):
         self._node_widgets = []
         # Sort gui_nodes by order_priority field if it exists
         sorted_gui_nodes = sorted(
-            gui_nodes.items(),
-            key=lambda item: item[1].get("order_priority", 0)
+            gui_nodes.items(), key=lambda item: item[1].get("order_priority", 0)
         )
-        
+
         for id, node in sorted_gui_nodes:
             node_widget = NodeWidget(id, node)
             layout.addWidget(node_widget)
@@ -913,6 +1061,8 @@ class WorkflowsWidget(QWidget):
                     # Get the value from the workflow
                     if node_data["class_type"] == "SwarmInputImage":
                         value = node_data["inputs"].get("image")
+                    elif node_data["class_type"] == "SwarmInputVideo":
+                        value = node_data["inputs"].get("video")
                     else:
                         value = node_data["inputs"].get("value")
 
@@ -1039,7 +1189,7 @@ class WorkflowsWidget(QWidget):
                                 widget.setText(str(value))
                                 break
 
-            elif node_widget._type == "text" or node_widget._type == "prompt":
+            elif node_widget.node_data["class_type"] == "SwarmInputText":
                 # For text inputs (SwarmInputText), find the QTextEdit widget
                 layout = node_widget.layout()
                 if layout:
@@ -1066,7 +1216,7 @@ class WorkflowsWidget(QWidget):
                                     widget.setCurrentIndex(index)
                                 break
 
-            elif node_widget._type == "image":
+            elif node_widget._type == "image" or node_widget._type == "video":
                 image_path = str(value)
 
                 # If the image path is not a full path, try to find it
@@ -1090,16 +1240,9 @@ class WorkflowsWidget(QWidget):
                             if os.path.exists(output_subdir_path):
                                 image_path = output_subdir_path
 
-                    # If still not found, open a file dialog to look for it
+                    # If still not found leave blank
                     if not os.path.exists(image_path):
-                        file_path, _ = QFileDialog.getOpenFileName(
-                            self,
-                            "Select Image File",
-                            "",
-                            "Image Files (*.png *.jpg *.jpeg *.bmp *.webp)",
-                        )
-                        if file_path:
-                            image_path = file_path
+                        return
 
                 # For image inputs, update the file path and thumbnail
                 value = image_path
@@ -1168,9 +1311,194 @@ class WorkflowsWidget(QWidget):
 
     def _queue_job(self, count):
         workflow = self._update_workflow_with_gui_values()
+
         # print(workflow)
         # Emit the job_queued signal with the workflow data and count
         self.job_queued.emit(self._workflow_data_filename, workflow, count)
+
+    def _find_alternative_model(self, model_name, available_models, node_data):
+        """Find an alternative model when the requested model is not available.
+
+        This method tries to find alternative models by:
+        1. For GGUF models: trying different quantizations (Q8 -> Q6 -> Q4, etc.)
+        2. For FP16 models: trying other precision (FP16 -> FP8)
+        3. For other models: looking for similar names
+
+        Args:
+            model_name: The name of the model to find an alternative for
+            available_models: List of available model names
+            node_data: The node data dictionary
+
+        Returns:
+            str: The alternative model name if found, None otherwise
+        """
+        # Check if it's a GGUF model
+        if model_name.endswith(".gguf"):
+            # Try different quantizations
+            quantization_levels = [
+                "Q8_0",
+                "Q6_K",
+                "Q5_K_M",
+                "Q5_K_S",
+                "Q5_1",
+                "Q5_0",
+                "Q4_K_M",
+                "Q4_K_S",
+            ]
+            base_name = model_name.replace(".gguf", "")
+
+            # Extract the current quantization if present
+            current_quant = None
+            for quant in quantization_levels:
+                if quant in base_name.upper():
+                    current_quant = quant
+                    break
+
+            # If we found a quantization, try others
+            if current_quant:
+                for quant in quantization_levels:
+                    if quant == current_quant:
+                        continue
+                    # Try to replace the quantization
+                    alternative = (
+                        base_name.upper().replace(current_quant, quant) + ".gguf"
+                    )
+                    if alternative in available_models:
+                        return alternative
+
+            # If no quantization found or none worked, try common patterns
+            for quant in quantization_levels:
+                # Try adding quantization suffix
+                alternative = f"{base_name}_{quant}.gguf"
+                if alternative in available_models:
+                    return alternative
+
+                # Try uppercase quantization suffix
+                alternative = f"{base_name}_{quant.upper()}.gguf"
+                if alternative in available_models:
+                    return alternative
+
+        # Check if it's an FP16 model
+        elif "fp16" in model_name.lower():
+            base_name = model_name.replace(".fp16", "").replace("fp16", "")
+
+            # Try FP8 version
+            alternative = f"{base_name}.fp8"
+            if alternative in available_models:
+                return alternative
+
+            # Try lowercase fp8
+            alternative = f"{base_name}.fp8"
+            if alternative in available_models:
+                return alternative
+
+        # Check if it's a safetensors model
+        elif model_name.endswith(".safetensors"):
+            base_name = model_name.replace(".safetensors", "")
+
+            # Try .ckpt version
+            alternative = f"{base_name}.ckpt"
+            if alternative in available_models:
+                return alternative
+
+        # Try to find any model with similar name (fallback)
+        base_name = model_name.split("_")[0]  # Get base name before any suffix
+        for available_model in available_models:
+            if base_name.lower() in available_model.lower():
+                return available_model
+
+        return None
+
+    def _check_workflow_models(self, workflow):
+        """Check if all models required by the workflow are available on the ComfyUI server.
+
+        Args:
+            workflow: The workflow dictionary
+
+        Returns:
+            list: List of missing model names, empty if all models are available
+        """
+        if not self._comfy_server or not self._comfy_server.is_connected():
+            print(
+                "Warning: ComfyUI server not connected, cannot check model availability"
+            )
+            return []
+
+        models = self._comfy_server.get_all_models_available()
+
+        # List of node classes that load models
+        model_loader_classes = [
+            "UnetLoaderGGUF",
+            "VAELoader",
+            "CLIPLoaderGGUF",
+            "CheckpointLoaderSimple",
+            "LoraLoader",
+            "ModelLoader",
+            "UNETLoader",
+        ]
+
+        missing_models = []
+
+        # Check each node in the workflow
+        for node_id, node_data in workflow.items():
+            class_type = node_data.get("class_type", "")
+
+            # Check if this node loads a model
+            if class_type in model_loader_classes:
+                inputs = node_data.get("inputs", {})
+
+                # Get the model name from the appropriate input field
+                if class_type == "UnetLoaderGGUF" and "unet_name" in inputs:
+                    model_name = inputs["unet_name"]
+                elif class_type == "UNETLoader" and "unet_name" in inputs:
+                    model_name = inputs["unet_name"]
+                elif class_type == "VAELoader" and "vae_name" in inputs:
+                    model_name = inputs["vae_name"]
+                elif class_type == "CLIPLoaderGGUF" and "clip_name" in inputs:
+                    model_name = inputs["clip_name"]
+                elif class_type == "CheckpointLoaderSimple" and "ckpt_name" in inputs:
+                    model_name = inputs["ckpt_name"]
+                elif class_type == "LoraLoader" and "lora_name" in inputs:
+                    model_name = inputs["lora_name"]
+                elif class_type == "ModelLoader" and "model_name" in inputs:
+                    model_name = inputs["model_name"]
+                else:
+                    continue
+
+                # if it is a link then ignore
+                if type(model_name) is list:
+                    continue
+
+                # Check if the model is available
+                if model_name not in models:
+                    # Try to find an alternative AI model
+                    alternative_model = self._find_alternative_model(
+                        model_name, models, node_data
+                    )
+                    if alternative_model:
+                        # Update the node_data to use the alternative model
+                        if class_type == "UnetLoaderGGUF" and "unet_name" in inputs:
+                            node_data["inputs"]["unet_name"] = alternative_model
+                        elif class_type == "UNETLoader" and "unet_name" in inputs:
+                            node_data["inputs"]["unet_name"] = alternative_model
+                        elif class_type == "VAELoader" and "vae_name" in inputs:
+                            node_data["inputs"]["vae_name"] = alternative_model
+                        elif class_type == "CLIPLoaderGGUF" and "clip_name" in inputs:
+                            node_data["inputs"]["clip_name"] = alternative_model
+                        elif (
+                            class_type == "CheckpointLoaderSimple"
+                            and "ckpt_name" in inputs
+                        ):
+                            node_data["inputs"]["ckpt_name"] = alternative_model
+                        elif class_type == "LoraLoader" and "lora_name" in inputs:
+                            node_data["inputs"]["lora_name"] = alternative_model
+                        elif class_type == "ModelLoader" and "model_name" in inputs:
+                            node_data["inputs"]["model_name"] = alternative_model
+                        # Don't add to missing_models since we found an alternative
+                    else:
+                        missing_models.append(model_name)
+
+        return missing_models
 
     def _update_workflow_with_gui_values(self):
         workflow = copy.deepcopy(self._workflow_data)
@@ -1178,6 +1506,12 @@ class WorkflowsWidget(QWidget):
             id = node_widget.id
             if workflow[id]["class_type"] == "SwarmInputImage":
                 workflow[id]["inputs"]["image"] = node_widget.get_value()
+                workflow[id]["input_width"] = node_widget.input_width
+                workflow[id]["input_height"] = node_widget.input_height
+            elif workflow[id]["class_type"] == "SwarmInputVideo":
+                workflow[id]["inputs"]["video"] = node_widget.get_value()
+                workflow[id]["input_width"] = node_widget.input_width
+                workflow[id]["input_height"] = node_widget.input_height
             else:
                 workflow[id]["inputs"]["value"] = node_widget.get_value()
         return workflow
