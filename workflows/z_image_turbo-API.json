@@ -1,0 +1,351 @@
+{
+  "72": {
+    "inputs": {
+      "bit_depth": "8bit",
+      "images": [
+        "70:43",
+        0
+      ]
+    },
+    "class_type": "SwarmSaveImageWS",
+    "_meta": {
+      "title": "SwarmSaveImageWS"
+    }
+  },
+  "74": {
+    "inputs": {
+      "title": "My Group",
+      "open_by_default": true,
+      "description": "",
+      "order_priority": 0,
+      "is_advanced": false,
+      "can_shrink": true
+    },
+    "class_type": "SwarmInputGroup",
+    "_meta": {
+      "title": "SwarmInputGroup"
+    }
+  },
+  "76": {
+    "inputs": {
+      "title": "Prompt",
+      "value": "",
+      "view_type": "prompt",
+      "description": "",
+      "order_priority": 0,
+      "is_advanced": false,
+      "raw_id": "",
+      "group": [
+        "74",
+        0
+      ]
+    },
+    "class_type": "SwarmInputText",
+    "_meta": {
+      "title": "SwarmInputText"
+    }
+  },
+  "77": {
+    "inputs": {
+      "title": "Seed",
+      "value": -1,
+      "step": 1,
+      "min": -1,
+      "max": 20000000,
+      "view_max": 20000000,
+      "view_type": "seed",
+      "description": "",
+      "order_priority": 0,
+      "is_advanced": false,
+      "raw_id": "",
+      "group": [
+        "74",
+        0
+      ]
+    },
+    "class_type": "SwarmInputInteger",
+    "_meta": {
+      "title": "SwarmInputInteger"
+    }
+  },
+  "78": {
+    "inputs": {
+      "title": "Steps",
+      "value": 22,
+      "step": 1,
+      "min": 1,
+      "max": 100,
+      "view_max": 100,
+      "view_type": "slider",
+      "description": "",
+      "order_priority": 0,
+      "is_advanced": false,
+      "raw_id": "",
+      "group": [
+        "74",
+        0
+      ]
+    },
+    "class_type": "SwarmInputInteger",
+    "_meta": {
+      "title": "SwarmInputInteger"
+    }
+  },
+  "79": {
+    "inputs": {
+      "title": "Strength",
+      "value": 20,
+      "step": 1,
+      "min": 0,
+      "max": 100,
+      "view_max": 100,
+      "view_type": "slider",
+      "description": "",
+      "order_priority": 0,
+      "is_advanced": false,
+      "raw_id": "",
+      "group": [
+        "74",
+        0
+      ]
+    },
+    "class_type": "SwarmInputFloat",
+    "_meta": {
+      "title": "SwarmInputFloat"
+    }
+  },
+  "84": {
+    "inputs": {
+      "title": "Aspect Ratio",
+      "value": "",
+      "values": "",
+      "description": "",
+      "order_priority": 0,
+      "is_advanced": false,
+      "raw_id": "",
+      "group": [
+        "74",
+        0
+      ]
+    },
+    "class_type": "SwarmInputDropdown",
+    "_meta": {
+      "title": "SwarmInputDropdown"
+    }
+  },
+  "89": {
+    "inputs": {
+      "aspect_ratio": [
+        "84",
+        1
+      ]
+    },
+    "class_type": "KM_Aspect_Ratio_Selector",
+    "_meta": {
+      "title": "KM_Aspect_Ratio_Selector"
+    }
+  },
+  "97": {
+    "inputs": {
+      "title": "CFG",
+      "value": 1,
+      "step": 0.1,
+      "min": 1,
+      "max": 10,
+      "view_max": 10,
+      "view_type": "slider",
+      "description": "",
+      "order_priority": 0,
+      "is_advanced": false,
+      "raw_id": "",
+      "group": [
+        "74",
+        0
+      ]
+    },
+    "class_type": "SwarmInputFloat",
+    "_meta": {
+      "title": "SwarmInputFloat"
+    }
+  },
+  "70:40": {
+    "inputs": {
+      "vae_name": "Flux\\UltraFlux-vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "70:39": {
+    "inputs": {
+      "clip_name": "qwen_3_4b.safetensors",
+      "type": "lumina2",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "70:45": {
+    "inputs": {
+      "text": [
+        "76",
+        0
+      ],
+      "clip": [
+        "70:39",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "70:42": {
+    "inputs": {
+      "conditioning": [
+        "70:45",
+        0
+      ]
+    },
+    "class_type": "ConditioningZeroOut",
+    "_meta": {
+      "title": "ConditioningZeroOut"
+    }
+  },
+  "70:70": {
+    "inputs": {
+      "noise_seed": [
+        "77",
+        0
+      ],
+      "steps": [
+        "78",
+        0
+      ],
+      "cfg": [
+        "97",
+        0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "beta",
+      "start_at_step": 0,
+      "end_at_step": 10000,
+      "var_seed": 0,
+      "var_seed_strength": 0,
+      "sigma_max": -1,
+      "sigma_min": -1,
+      "rho": 7,
+      "add_noise": "enable",
+      "return_with_leftover_noise": "disable",
+      "previews": "default",
+      "tile_sample": false,
+      "tile_size": 1024,
+      "model": [
+        "70:47",
+        0
+      ],
+      "positive": [
+        "70:71",
+        0
+      ],
+      "negative": [
+        "70:42",
+        0
+      ],
+      "latent_image": [
+        "70:41",
+        0
+      ]
+    },
+    "class_type": "SwarmKSampler",
+    "_meta": {
+      "title": "SwarmKSampler"
+    }
+  },
+  "70:43": {
+    "inputs": {
+      "samples": [
+        "70:70",
+        0
+      ],
+      "vae": [
+        "70:40",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "70:47": {
+    "inputs": {
+      "shift": 3,
+      "model": [
+        "70:46",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingAuraFlow",
+    "_meta": {
+      "title": "ModelSamplingAuraFlow"
+    }
+  },
+  "70:41": {
+    "inputs": {
+      "width": [
+        "89",
+        1
+      ],
+      "height": [
+        "89",
+        2
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptySD3LatentImage",
+    "_meta": {
+      "title": "EmptySD3LatentImage"
+    }
+  },
+  "70:46": {
+    "inputs": {
+      "unet_name": "z_image_turbo_bf16.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "70:71": {
+    "inputs": {
+      "randomize_percent": 50,
+      "strength": [
+        "79",
+        0
+      ],
+      "noise_insert": "noise on beginning steps",
+      "steps_switchover_percent": 20,
+      "seed": [
+        "77",
+        0
+      ],
+      "mask_starts_at": "beginning",
+      "mask_percent": 0,
+      "log_to_console": false,
+      "conditioning": [
+        "70:45",
+        0
+      ]
+    },
+    "class_type": "SeedVarianceEnhancer",
+    "_meta": {
+      "title": "SeedVarianceEnhancer"
+    }
+  }
+}
