@@ -1,10 +1,15 @@
 import json
 import uuid
 from urllib.parse import urlencode
+from xmlrpc import client
 
 import urllib3
 from PySide6.QtWebSockets import QWebSocket
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QMessageBox
 from urllib3 import encode_multipart_formdata
+
+
 
 
 class comfyServer(QWebSocket):
@@ -22,12 +27,33 @@ class comfyServer(QWebSocket):
         self.disconnected.connect(self._on_disconnected)
         self.errorOccurred.connect(self._on_error)
 
+        self.timeout_timer = QTimer()
+        # Set a 5-second timeout
+        self.timeout_timer.setSingleShot(True)
+        self.timeout_timer.timeout.connect(self.on_timeout)
+        self.timeout_timer.start(7000)
+
         # Open WebSocket connection
         url = f"ws://{server_address}/ws?clientId={self._client_id}"
         self.open(url)
 
+    def on_timeout(self):
+        # Notify the user that the server couldn't be reached.
+        self._connected = False
+        message = (
+            f"Could not reach the Comfy server at '{self._server_address}'.\n\n"
+            "Please check the server address and ensure the Comfy server is running."
+        )
+        try:
+            QMessageBox.critical(None, "Comfy Server Connection Error", message)
+        except Exception:
+            # If for some reason the GUI dialog cannot be shown (no GUI available),
+            # fall back to printing the message to stdout/stderr.
+            print(message)
+
     def _on_connected(self):
         """Handle WebSocket connection established."""
+        self.timeout_timer.stop()
         self._connected = True
 
     def _on_disconnected(self):
@@ -60,11 +86,13 @@ class comfyServer(QWebSocket):
         return json.loads(req.data)
 
     def get_system_stats(self, prompt_id):
-        req = urllib3.PoolManager().request(
-            "GET", "http://{}/system_stats".format(self._server_address)
-        )
-        return json.loads(req.data)
-
+        if self.is_connected():
+            req = urllib3.PoolManager().request(
+                "GET", "http://{}/system_stats".format(self._server_address)
+            )
+            return json.loads(req.data)
+        return "not connected yet"
+    
     def cancel_prompt(self, prompt_id):
         p = {"prompt_id": prompt_id, "client_id": self._client_id}
         headers = {"Content-Type": "application/json"}
@@ -140,24 +168,6 @@ class comfyServer(QWebSocket):
             "GET", "http://{}/object_info/{}".format(self._server_address, node_class)
         )
         return json.loads(req.data)
-
-    # def upload_video(self, input_path, name, file_type="input", overwrite=False):
-    #     """Uploads a video to ComfyUI using multipart/form-data encoding."""
-    #     with open(input_path, 'rb') as file:
-    #         multipart_data = MultipartEncoder(
-    #             fields={
-    #                 'image': (name, file, 'video/mp4'), # Use 'video/mp4' or appropriate MIME type
-    #                 'type': file_type,
-    #                 'overwrite': str(overwrite).lower()
-    #             }
-    #         )
-    #         # Send the POST request to the upload endpoint
-    #         response = requests.post(
-    #             f"http://{server_address}/upload/",
-    #             data=multipart_data,
-    #             headers={'Content-Type': multipart_data.content_type}
-    #         )
-    #         return response
 
     def upload_image(self, input_path, name, image_type="input", overwrite=False):
         with open(input_path, "rb") as file:

@@ -516,7 +516,6 @@ class WorkflowsWidget(QWidget):
     def __init__(self):
         super().__init__()
         self.setMinimumWidth(250)
-        # self._comfy_server = None
 
         # Create main layout
         layout = QVBoxLayout()
@@ -1350,7 +1349,7 @@ class WorkflowsWidget(QWidget):
             # Extract the current quantization if present
             current_quant = None
             for quant in quantization_levels:
-                if quant in base_name.upper():
+                if quant in base_name:
                     current_quant = quant
                     break
 
@@ -1361,7 +1360,7 @@ class WorkflowsWidget(QWidget):
                         continue
                     # Try to replace the quantization
                     alternative = (
-                        base_name.upper().replace(current_quant, quant) + ".gguf"
+                        base_name.replace(current_quant, quant) + ".gguf"
                     )
                     if alternative in available_models:
                         return alternative
@@ -1476,6 +1475,7 @@ class WorkflowsWidget(QWidget):
                         model_name, models, node_data
                     )
                     if alternative_model:
+                        print(f"alt model for {model_name} is {alternative_model}")
                         # Update the node_data to use the alternative model
                         if class_type == "UnetLoaderGGUF" and "unet_name" in inputs:
                             node_data["inputs"]["unet_name"] = alternative_model

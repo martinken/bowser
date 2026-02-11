@@ -228,7 +228,7 @@ class GenMain(QMainWindow):
         # Get screen size and calculate 60% of it
         screen_size = QGuiApplication.primaryScreen().availableSize()
         new_width = int(screen_size.width() * 3 / 5)
-        new_height = int(screen_size.height() * 4 / 5)
+        new_height = int(screen_size.height() * 2 / 3)
         self.resize(new_width, new_height)
 
         # If workflow_root is set, open it as workflows directory

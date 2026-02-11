@@ -41,8 +41,7 @@ A Qt-based graphical user interface for ComfyUI, designed to provide an intuitiv
 ## Installation
 
 ### Prerequisites
-- Python 3.12 or higher
-- ComfyUI server running (default: `127.0.0.1:8188`)
+- Install SwarmUI and verify it runs
 
 ### Dependencies
 
@@ -60,6 +59,14 @@ Pillow  # For image handling
 ## Usage
 
 ### Running the Application
+
+first start ComfyUI with the SwarmUI nodes and models, something like
+
+```bash
+.\SwarmUI\dlbackend\comfy\python_embeded\python.exe -s .\SwarmUI\dlbackend\comfy\ComfyUI\main.py --windows-standalone-build --extra-model-paths-config  .\SwarmUI\Data\comfy-auto-model.yaml --disable-auto-launch --preview-method latent2rgb
+```
+
+then run the application something like
 
 ```bash
 # From the project root

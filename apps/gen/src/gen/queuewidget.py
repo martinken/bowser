@@ -164,6 +164,9 @@ class Job:
                     # Try to extract Frames
                     elif "frames" in title_lower or "frame" in title_lower:
                         node_metadata["frames"] = value
+                    # Try to extract Frames
+                    elif "cfg" in title_lower or "cfgscale" in title_lower:
+                        node_metadata["cfg"] = value
 
                 # Only add to metadata_list if we found relevant data
                 if node_metadata:
@@ -191,7 +194,14 @@ class Job:
         height = int(metadata.get("height", height))
         steps = int(metadata.get("steps", 10))
         frames = int(metadata.get("frames", 1))
-        self.ops = width * height * steps * frames
+        cfg = float(metadata.get("cfg", 1.0))
+        # when cfg is 1.0 samplers only run once per step at anything higher
+        # they run twice, but some workflows only use cfg for one of the
+        # samplers in a multisampler setup, so we cap it at 1.6 to avoid
+        # massively overestimating runtime for some workflows
+        if cfg > 1.0:
+            cfg = 1.6
+        self.ops = width * height * steps * frames * cfg
 
     def set_start_time(self, timestamp):
         self.results[self.completions]["start_time"] = timestamp
@@ -204,6 +214,107 @@ class Job:
 
     def is_completed(self):
         return self.completions >= self.count
+
+    def _replace_random_syntax(self, text, seed):
+        """Replace <random:...> syntax in text with random selections.
+
+        Uses the provided seed for deterministic results.
+        Supports:
+        - <random:val1, val2, val3> - random selection from list
+        - <random:val1|val2|val3> - pipe separator for values with commas
+        - <random:1-5> - integer ranges
+        - <random:0.8-1.2> - float ranges with decimal precision
+        - <random[2-4]:val1, val2> - repeat 2-4 times without repetition
+        - <random[2-4,]:val1, val2> - repeat with comma separator
+
+        Args:
+            text (str): Text containing <random:...> patterns
+            seed (int): Seed for random number generation
+
+        Returns:
+            str: Text with random patterns replaced
+        """
+        import random
+        import re
+
+        # Create a seeded random instance
+        rng = random.Random(seed)
+
+        # Pattern to match <random[repeat]:options> or <random:options>
+        pattern = r"<random(?:\[(\d+(?:-\d+)?)(,?)\])?:([^>]+)>"
+
+        def replace_match(match):
+            repeat_spec = match.group(1)  # e.g., "2" or "2-4"
+            comma_sep = match.group(2)  # "," if comma separator requested
+            options_str = match.group(3)  # The options list
+
+            # Determine separator (| is preferred if it appears more than ,)
+            if options_str.count("|") > options_str.count(","):
+                separator = "|"
+            else:
+                separator = ","
+
+            # Split options
+            options = [opt.strip() for opt in options_str.split(separator)]
+
+            # Process each option for ranges
+            expanded_options = []
+            for opt in options:
+                # Check for numeric range (int or float)
+                range_match = re.match(r"^(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)$", opt)
+                if range_match:
+                    start_str, end_str = range_match.groups()
+
+                    # Check if it's a float range
+                    if "." in start_str or "." in end_str:
+                        # Float range - determine decimal places
+                        decimal_places = max(
+                            len(start_str.split(".")[-1]) if "." in start_str else 0,
+                            len(end_str.split(".")[-1]) if "." in end_str else 0,
+                        )
+                        start = float(start_str)
+                        end = float(end_str)
+
+                        # Generate range with appropriate step
+                        step = 10 ** (-decimal_places)
+                        current = start
+                        while current <= end + step / 2:  # Add small epsilon for float comparison
+                            expanded_options.append(f"{current:.{decimal_places}f}")
+                            current += step
+                    else:
+                        # Integer range
+                        start = int(start_str)
+                        end = int(end_str)
+                        expanded_options.extend([str(i) for i in range(start, end + 1)])
+                else:
+                    expanded_options.append(opt)
+
+            # Determine how many times to repeat
+            if repeat_spec:
+                if "-" in repeat_spec:
+                    min_repeat, max_repeat = map(int, repeat_spec.split("-"))
+                    repeat_count = rng.randint(min_repeat, max_repeat)
+                else:
+                    repeat_count = int(repeat_spec)
+            else:
+                repeat_count = 1
+
+            # Select random options (without repetition if possible)
+            if repeat_count <= len(expanded_options):
+                selected = rng.sample(expanded_options, repeat_count)
+            else:
+                # If more repeats than options, allow repetition
+                selected = rng.choices(expanded_options, k=repeat_count)
+
+            # Join with appropriate separator
+            if comma_sep:
+                return ", ".join(selected)
+            else:
+                return " ".join(selected)
+
+        # Replace all matches
+        result = re.sub(pattern, replace_match, text)
+        return result
 
     def get_workflow(self, comfy_server):
         workflow = copy.deepcopy(self._workflow)
@@ -256,6 +367,20 @@ class Job:
                     )
                     self._video_name = result["name"]
                 node["inputs"]["video"] = self._video_name
+
+            # Handle SwarmInputText nodes with view_type of prompt
+            if node["class_type"] == "SwarmInputText":
+                if node["inputs"].get("view_type") == "prompt" and "value" in node["inputs"]:
+                    original_prompt = node["inputs"]["value"]
+
+                    # Perform random replacements using the seed
+                    if self.start_seed == -1:
+                        self.start_seed = randint(0, 2**63 - 1)
+                    modified_prompt = self._replace_random_syntax(original_prompt, self.start_seed + self.completions)
+                    # Store the original prompt for reference if different from the modified_prompt
+                    if modified_prompt != original_prompt:
+                        self.results[self.completions]["original_prompt"] = original_prompt
+                    node["inputs"]["value"] = modified_prompt
 
         self.results[self.completions]["seed"] = self.start_seed + self.completions
         self.results[self.completions]["submitted_workflow"] = workflow
@@ -941,8 +1066,10 @@ class QueueWidget(QWidget):
         bowser_params["device"] = self._current_device
 
         sui_extra_data = {
-            "generation_time": job.results[job.completions]["elapsed_time"]
+            "generation_time": job.results[job.completions]["elapsed_time"],
         }
+        if "original_prompt" in job.results[job.completions]:
+            sui_extra_data["original_prompt"] = job.results[job.completions]["original_prompt"]
 
         parameters = {
             "sui_image_params": sui_image_params,
@@ -1113,7 +1240,8 @@ class QueueWidget(QWidget):
                     if vram_total > 0:
                         vram_used = vram_total - vram_free
                         vram_percent = (
-                            (vram_used / vram_total * 100) if vram_total > 0 else 0
+                            (vram_used / vram_total * 100) if vram_total > 0
+                            else 0
                         )
                         devices_lines.append(
                             f"  <b>VRAM:</b> {vram_used / (1024**3):.2f}GB / {vram_total / (1024**3):.2f}GB ({vram_percent:.1f}% used)"
