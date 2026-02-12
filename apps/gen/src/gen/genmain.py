@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from .comfyserver import comfyServer
-from .queuewidget import QueueWidget
+from .serverswidget import ServersWidget
 from .workflowswidget import WorkflowsWidget
 
 
@@ -49,7 +49,8 @@ class SettingsDialog(QDialog):
 
         # Server address field
         self.server_address_edit = QLineEdit()
-        form_layout.addRow(QLabel("Server Address:"), self.server_address_edit)
+        self.server_address_edit.setPlaceholderText("e.g., 127.0.0.1:8188, 192.168.1.100:8188")
+        form_layout.addRow(QLabel("Server Address(es):"), self.server_address_edit)
 
         # Output root field
         self.output_root_edit = QLineEdit()
@@ -107,9 +108,11 @@ class SettingsDialog(QDialog):
     def load_settings(self, settings):
         """Load settings into the dialog."""
         if settings:
-            self.server_address_edit.setText(
-                settings.get("server_address", "127.0.0.1:8188")
-            )
+            # Join server addresses with commas for display
+            server_addr = settings.get("server_address", "127.0.0.1:8188")
+            if isinstance(server_addr, list):
+                server_addr = ", ".join(server_addr)
+            self.server_address_edit.setText(server_addr)
             self.output_root_edit.setText(settings.get("output_root", ""))
             self.workflow_root_edit.setText(settings.get("workflow_root", ""))
 
@@ -131,10 +134,11 @@ class GenMain(QMainWindow):
         super().__init__()
 
         # handle command line args
-        self._server_address = ""
+        self._server_addresses = []
         self._workflow_root = ""
         if server_address is not None:
-            self._server_address = server_address
+            # Split comma-separated server addresses
+            self._server_addresses = [s.strip() for s in server_address.split(",") if s.strip()]
         if workflow_root is not None:
             self._workflow_root = workflow_root
         self._output_root = ""
@@ -153,6 +157,10 @@ class GenMain(QMainWindow):
         # Create menu bar
         self._create_menu_bar()
 
+        # Create status label
+        self._status_label = QLabel("Ready")
+        self._status_label.setStyleSheet("color: #CCCCCC; padding: 2px 8px;")
+
         # Create the central widget and main layout
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -160,29 +168,55 @@ class GenMain(QMainWindow):
         # Create horizontal splitter
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        self._comfy_server = comfyServer(server_address=self._server_address)
+        # Create comfy server instances for each server address
+        self._comfy_servers = []
+        if self._server_addresses:
+            for address in self._server_addresses:
+                self._comfy_servers.append(comfyServer(server_address=address))
+        else:
+            # Fallback to default server if none specified
+            self._comfy_servers.append(comfyServer(server_address="127.0.0.1:8188"))
 
         # Create actual widgets
         self.workflows_widget = WorkflowsWidget()
         self.workflows_widget.setMinimumWidth(400)
-        self.workflows_widget.set_comfy_server(self._comfy_server)
+        # comfy server is used to query node data which should be the same for
+        # all servers if they have that node
+        self.workflows_widget.set_comfy_server(self._comfy_servers[0])
         self.workflows_widget.set_output_root(self._output_root)
 
-        self.queue_widget = QueueWidget()
-        self.queue_widget.setMinimumWidth(300)
-        self.queue_widget.set_comfy_server(self._comfy_server)
-        self.queue_widget.set_output_root(self._output_root)
-        self.queue_widget.new_file.connect(self.got_new_file)
-        self.queue_widget.show_file.connect(self.got_show_file)
-        self.queue_widget.reload_job.connect(self._reload_job)
-        self.queue_widget.new_pil_image.connect(self.got_new_image)
+        # Create servers widget with tabbed interface
+        self.servers_widget = ServersWidget()
+        self.servers_widget.setMinimumWidth(360)
+        
+        # Add all servers to the servers widget
+        for i, server in enumerate(self._comfy_servers):
+            if i == 0:
+                # First server is the default
+                self.servers_widget.add_server(self._server_addresses[i], server)
+            elif i < len(self._server_addresses):
+                # Additional servers
+                self.servers_widget.add_server(self._server_addresses[i], server)
+            else:
+                # Fallback servers without explicit addresses
+                self.servers_widget.add_server("127.0.0.1:8188", server)
+        
+        # Connect signals from all queue widgets
+        self.servers_widget.connect_signals(self)
+        
+        # Set output root for all servers
+        self.servers_widget.set_output_root_for_all(self._output_root)
 
         # Image gallery
         self._image_gallery = ImageGallery()
+        self._image_gallery.set_reverse_order(True)
         self._image_gallery.setStyleSheet("border: 0px;")
 
         # Connect thumbnail clicked signal
         self._image_gallery.thumbnail_clicked.connect(self._on_thumbnail_clicked)
+        
+        # Connect status update signal
+        self._image_gallery.status_update.connect(self.set_status_message)
 
         # Image Video Viewer (handles both image and video viewing)
         self._image_video_viewer = ImageVideoViewer()
@@ -194,6 +228,7 @@ class GenMain(QMainWindow):
 
         # JSON metadata display
         self._metadata_display = MetadataViewer()
+        self._metadata_display.input_file_selected.connect(self._on_input_file_selected)
 
         # image viewer
         self._image_video_viewer.setMinimumWidth(400)
@@ -203,27 +238,38 @@ class GenMain(QMainWindow):
 
         # Add widgets to splitter
         self.splitter.addWidget(self.workflows_widget)
-        self.splitter.addWidget(self.queue_widget)
+        self.splitter.addWidget(self.servers_widget)
         self.splitter.addWidget(self._image_gallery)
         self.splitter.addWidget(self._image_video_viewer)
         self.splitter.addWidget(self._metadata_display)
 
         # Set initial sizes for the splitter
         # Third column (image/video viewer) gets extra space with stretch factor
-        self.splitter.setSizes([400, 300, 300, 400, 250])
+        self.splitter.setSizes([400, 360, 270, 400, 250])
         self.splitter.setStretchFactor(0, 0)  # Jobs - no stretch
-        self.splitter.setStretchFactor(1, 0)  # Queue - no stretch
+        self.splitter.setStretchFactor(1, 0)  # Servers - no stretch
         self.splitter.setStretchFactor(2, 0)  # gallery - no stretch,
         self.splitter.setStretchFactor(3, 1)  # Output - gets extra space
         self.splitter.setStretchFactor(4, 0)  # metadata
 
-        # Set up layout
-        layout = QHBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        layout.addWidget(self.splitter)
+        # Set up main layout with menu bar and status bar
+        main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
-        central_widget.setLayout(layout)
+        # Create horizontal layout for menu bar
+        menu_layout = QHBoxLayout()
+        menu_layout.setContentsMargins(0, 0, 0, 0)
+        menu_layout.addWidget(self.menuBar())
+        menu_layout.addStretch()
+        menu_layout.addWidget(self._status_label)
+
+        # Add menu bar and central widget to main layout
+        main_layout.addLayout(menu_layout)
+        main_layout.addWidget(self.splitter)
+        main_layout.setStretchFactor(self.splitter, 1)  # Splitter takes all extra space
+
+        central_widget.setLayout(main_layout)
 
         # Get screen size and calculate 60% of it
         screen_size = QGuiApplication.primaryScreen().availableSize()
@@ -264,7 +310,7 @@ class GenMain(QMainWindow):
 
     def _clear_history(self):
         """Clear the queue history and image gallery."""
-        self.queue_widget.clear_history()
+        self.servers_widget.clear_history()
         self._image_gallery.clear_images()
 
     def _load_settings(self):
@@ -275,9 +321,12 @@ class GenMain(QMainWindow):
                 # Update values if not already set
                 if (
                     "server_address" in self._settings
-                    and len(self._server_address) == 0
+                    and len(self._server_addresses) == 0
                 ):
-                    self._server_address = self._settings["server_address"]
+                    # Split comma-separated server addresses from settings
+                    server_addr = self._settings["server_address"]
+                    if server_addr:
+                        self._server_addresses = [s.strip() for s in server_addr.split(",") if s.strip()]
                 if "workflow_root" in self._settings and len(self._workflow_root) == 0:
                     self._workflow_root = self._settings["workflow_root"]
                 if "output_root" in self._settings and len(self._output_root) == 0:
@@ -304,11 +353,12 @@ class GenMain(QMainWindow):
 
             # Update our settings
             self._settings.update(new_settings)
-            self._server_address = new_settings["server_address"]
+            # Split comma-separated server addresses
+            self._server_addresses = [s.strip() for s in new_settings["server_address"].split(",") if s.strip()]
             self._workflow_root = new_settings["workflow_root"]
             self._output_root = new_settings["output_root"]
             self.workflows_widget.set_output_root(self._output_root)
-            self.queue_widget.set_output_root(self._output_root)
+            self.servers_widget.set_output_root_for_all(self._output_root)
 
             # Save to file
             self._save_settings()
@@ -330,8 +380,12 @@ class GenMain(QMainWindow):
         """
         Handle the window close event.
         """
-        if self._comfy_server is not None:
-            self._comfy_server.close_websocket_connection()
+        for comfy_server in self._comfy_servers:
+            if comfy_server is not None:
+                comfy_server.close_websocket_connection()
+
+        self.servers_widget.save_performance_data()
+        event.accept()  # Accept the event to close the window
 
     def _create_menu_bar(self):
         """Create the menu bar with File menu."""
@@ -363,6 +417,16 @@ class GenMain(QMainWindow):
         clear_history_action.setShortcut("Ctrl+Shift+H")
         clear_history_action.triggered.connect(self._clear_history)
 
+    def _on_input_file_selected(self, file_path: str) -> None:
+        """Handle input file selection event.
+
+        Args:
+            file_path (str): Path to the selected input file.
+        """
+        # Load and display file metadata
+        self._metadata_display.load_file_metadata(file_path)
+        self._image_video_viewer.display_file(file_path)
+
     def open_workflows_directory(self, directory_path=None):
         """Prompt user to select a workflows directory or use provided path and update JobsWidget."""
         # If no directory path provided, open directory selection dialog
@@ -393,7 +457,8 @@ class GenMain(QMainWindow):
             workflow_data: Dictionary containing the workflow data
             count: Number of jobs to queue
         """
-        self.queue_widget.queue_job(workflow_name, workflow_data, count)
+        # Queue the job on the current tab
+        self.servers_widget.queue_job_on_current_tab(workflow_name, workflow_data, count)
 
     def keyPressEvent(self, event):
         """Handle key press events for global keyboard shortcuts.
@@ -424,6 +489,14 @@ class GenMain(QMainWindow):
             self._image_video_viewer.get_image_viewer().fullSize()
         elif event.key() == Qt.Key.Key_X:
             self._on_mark_file_clicked()
+
+    def set_status_message(self, message: str):
+        """Update the status label with a message.
+        
+        Args:
+            message: The status message to display.
+        """
+        self._status_label.setText(message)
 
     def _apply_dark_mode(self):
         """Apply dark mode using Fusion style with custom dark palette."""

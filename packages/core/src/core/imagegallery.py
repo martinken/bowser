@@ -177,6 +177,9 @@ class ImageGallery(QWidget):
 
     # Signal emitted when a thumbnail is clicked
     thumbnail_clicked = Signal(str)
+    
+    # Signal emitted when there's a status update (e.g., file operations)
+    status_update = Signal(str)
 
     def __init__(self, parent: Optional[QWidget] = None):
         """Initialize the ImageGallery widget.
@@ -193,6 +196,7 @@ class ImageGallery(QWidget):
         self._current_columns = -1
         self._last_thumbnail_clicked_index = 0
         self._thumbnail_size: tuple[int, int] = (192, 192)
+        self._reverse_order = False
         # self.setStyleSheet("color: gray;")
         self._process_pool = None
         self._setup_ui()
@@ -425,20 +429,30 @@ class ImageGallery(QWidget):
         if _filter_text and _filter_text.strip() != "":
             filter_lower = _filter_text.lower()
 
+        # Determine the iteration order based on reverse_order setting
+        if self._reverse_order:
+            # Iterate in reverse order
+            image_paths_iter = reversed(self._image_paths)
+            widget_iter = reversed(self._thumbnail_widgets[: len(self._image_paths)])
+        else:
+            # Iterate in normal order
+            image_paths_iter = self._image_paths
+            widget_iter = self._thumbnail_widgets
+
         count = 0
-        for i, image_path in enumerate(self._image_paths):
-            self._content_layout.removeWidget(self._thumbnail_widgets[i])
+        for i, (image_path, widget) in enumerate(zip(image_paths_iter, widget_iter)):
+            self._content_layout.removeWidget(widget)
             if (
                 filter_lower is None
                 or filter_lower in os.path.basename(image_path).lower()
             ):
                 row = count // columns
                 col = count % columns
-                self._content_layout.addWidget(self._thumbnail_widgets[i], row, col)
-                self._thumbnail_widgets[i].show()
+                self._content_layout.addWidget(widget, row, col)
+                widget.show()
                 count += 1
             else:
-                self._thumbnail_widgets[i].hide()
+                widget.hide()
 
     def _on_filter_text_changed(self, text: str) -> None:
         """Handle filter text changed event.
@@ -453,9 +467,12 @@ class ImageGallery(QWidget):
         if not self._image_paths:
             return False
 
+        normalized_filename = filename.replace("\\", "/")
+
         # try to find the file
         for idx, path in enumerate(self._image_paths):
-            if path == filename and not self._thumbnail_widgets[idx].isHidden():
+            normalized_path = path.replace("\\", "/")
+            if normalized_path == normalized_filename and not self._thumbnail_widgets[idx].isHidden():
                 self._on_thumbnail_clicked(idx)
                 return True
         return False
@@ -526,21 +543,32 @@ class ImageGallery(QWidget):
         if not self._image_paths:
             return False
 
-        # Move to next shown thumbnail, no wrapping
-        new_index = self._last_thumbnail_clicked_index + 1
-        while (
-            new_index < len(self._image_paths)
-            and self._thumbnail_widgets[new_index].isHidden()
-        ):
-            new_index += 1
+        if self._reverse_order:
+            # Move to previous thumbnail, no wrapping
+            new_index = self._last_thumbnail_clicked_index - 1
+            while new_index >= 0 and self._thumbnail_widgets[new_index].isHidden():
+                new_index -= 1
 
-        # Only emit signal if index changed
-        if (
-            new_index < len(self._image_paths)
-            and new_index != self._last_thumbnail_clicked_index
-        ):
-            self._on_thumbnail_clicked(new_index)
-            return True
+            # Only emit signal if index changed
+            if new_index >= 0 and new_index != self._last_thumbnail_clicked_index:
+                self._on_thumbnail_clicked(new_index)
+                return True
+        else:
+            # Move to next shown thumbnail, no wrapping
+            new_index = self._last_thumbnail_clicked_index + 1
+            while (
+                new_index < len(self._image_paths)
+                and self._thumbnail_widgets[new_index].isHidden()
+            ):
+                new_index += 1
+
+            # Only emit signal if index changed
+            if (
+                new_index < len(self._image_paths)
+                and new_index != self._last_thumbnail_clicked_index
+            ):
+                self._on_thumbnail_clicked(new_index)
+                return True
 
         return False
 
@@ -553,15 +581,32 @@ class ImageGallery(QWidget):
         if not self._image_paths:
             return False
 
-        # Move to previous thumbnail, no wrapping
-        new_index = self._last_thumbnail_clicked_index - 1
-        while new_index >= 0 and self._thumbnail_widgets[new_index].isHidden():
-            new_index -= 1
+        if self._reverse_order:
+            # Move to next shown thumbnail, no wrapping
+            new_index = self._last_thumbnail_clicked_index + 1
+            while (
+                new_index < len(self._image_paths)
+                and self._thumbnail_widgets[new_index].isHidden()
+            ):
+                new_index += 1
 
-        # Only emit signal if index changed
-        if new_index >= 0 and new_index != self._last_thumbnail_clicked_index:
-            self._on_thumbnail_clicked(new_index)
-            return True
+            # Only emit signal if index changed
+            if (
+                new_index < len(self._image_paths)
+                and new_index != self._last_thumbnail_clicked_index
+            ):
+                self._on_thumbnail_clicked(new_index)
+                return True
+        else:
+            # Move to previous thumbnail, no wrapping
+            new_index = self._last_thumbnail_clicked_index - 1
+            while new_index >= 0 and self._thumbnail_widgets[new_index].isHidden():
+                new_index -= 1
+
+            # Only emit signal if index changed
+            if new_index >= 0 and new_index != self._last_thumbnail_clicked_index:
+                self._on_thumbnail_clicked(new_index)
+                return True
 
         return False
 
@@ -742,7 +787,7 @@ class ImageGallery(QWidget):
             if deleted_count > 0:
                 self._display_thumbnails()
 
-            # Show appropriate message based on results
+            # Show error message if any errors
             if error_count > 0:
                 QMessageBox.warning(
                     self,
@@ -751,11 +796,20 @@ class ImageGallery(QWidget):
                     f"Check console for details.",
                 )
             else:
-                QMessageBox.information(
-                    self,
-                    "Files Deleted",
-                    f"Successfully deleted {deleted_count} file(s).",
+                # Emit status update signal instead of showing a message box
+                self.status_update.emit(
+                    f"Successfully deleted {deleted_count} file(s)."
                 )
+
+    def set_reverse_order(self, reverse: bool) -> None:
+        """Set whether to display thumbnails in reverse order.
+
+        Args:
+            reverse (bool): True to display thumbnails in reverse order, False for normal order.
+        """
+        self._reverse_order = reverse
+        # Refresh the display with the new order
+        self._display_thumbnails()
 
     def set_thumbnail_size(self, size: Tuple[int, int]) -> None:
         """Set the size for thumbnails.

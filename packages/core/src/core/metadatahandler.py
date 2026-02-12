@@ -23,10 +23,10 @@ class MetadataHandler:
         "Seed": {"keys": ["seed"], "default": "", "convert": str},
         "File": {"keys": ["file"], "default": ""},
         "InImage": {
-            "keys": ["myimage_filename", "initimage_filename"],
+            "keys": ["myimage_filename", "initimage_filename", "initimage"],
             "default": "",
         },
-        "InVideo": {"keys": ["myvideo_filename"], "default": ""},
+        "InVideo": {"keys": ["myvideo_filename", "myvideo"], "default": ""},
         "Size": {"keys": ["size"], "default": ""},
         "Steps": {"keys": ["steps"], "default": "", "convert": str},
         "CFG": {"keys": ["cfg", "cfgscale"], "default": "", "convert": str},
@@ -359,6 +359,6 @@ class MetadataHandler:
 
         # Apply conversion if specified
         if "convert" in config and value:
-            value = config["convert"](value)
+            value = config["convert"](value) # pyright: ignore[reportCallIssue]
 
         return value

@@ -190,7 +190,7 @@ class ViewMain(QMainWindow):
 
         # 2. Image gallery
         self._image_gallery = ImageGallery()
-        self._image_gallery.setStyleSheet("border: 1px solid #181818;")
+        self._image_gallery.setStyleSheet("border: 0px;")
 
         # Connect thumbnail clicked signal
         self._image_gallery.thumbnail_clicked.connect(self._on_thumbnail_clicked)
@@ -205,6 +205,7 @@ class ViewMain(QMainWindow):
 
         # 4. JSON metadata display
         self._metadata_display = MetadataViewer()
+        self._metadata_display.input_file_selected.connect(self._on_input_file_selected)
 
         # Create a splitter for horizontal layout
         self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -282,6 +283,12 @@ class ViewMain(QMainWindow):
         keybindings_action.triggered.connect(self._show_keybindings)
         main_menu.addAction(keybindings_action)
 
+        # Create Compact View action
+        compact_view_action = QAction("Compact View", self)
+        compact_view_action.setShortcut("Ctrl+Shift+C")
+        compact_view_action.triggered.connect(self._set_compact_view)
+        main_menu.addAction(compact_view_action)
+
         # Add separator
         main_menu.addSeparator()
 
@@ -295,6 +302,14 @@ class ViewMain(QMainWindow):
         """Show the keybindings dialog."""
         dialog = KeybindingsDialog(self)
         dialog.exec()
+
+    def _set_compact_view(self):
+        """Set the window and splitter to compact view dimensions."""
+        # Resize window to 1300x515 pixels
+        self.resize(1300, 515)
+        
+        # Set splitter sizes to 200, 220, 580, 290
+        self._main_splitter.setSizes([200, 220, 580, 290])
 
     def _prune_empty_directories_action(self):
         """Handle Prune Empty Directories menu action."""
@@ -403,6 +418,30 @@ class ViewMain(QMainWindow):
         """
         # Load images from the selected folder into the gallery
         self._image_gallery.load_images_from_folder(folder_path)
+
+    def _on_input_file_selected(self, file_path: str) -> None:
+        """Handle input file selection event.
+
+        Args:
+            file_path (str): Path to the selected input file.
+        """
+        # if the file is in our root_path show it in the image gallewry, otherwise just load it in the viewer and metadata display
+        root_path = self._directory_tree.get_root_folder()
+        
+        # Normalize paths to handle mixed Unix/Windows style paths
+        # Convert to forward slashes for comparison
+        normalized_root = root_path.replace("\\", "/") if root_path else ""
+        normalized_file = file_path.replace("\\", "/")
+        
+        if root_path and normalized_file.startswith(normalized_root):
+            # get the path up to the filename and load that folder in the gallery, which will also select the file
+            folder_path = os.path.dirname(file_path)
+            self._directory_tree.select_folder(folder_path)
+            self._image_gallery.show_image(file_path)
+        else:
+            # Load and display file metadata
+            self._metadata_display.load_file_metadata(file_path)
+            self._image_video_viewer.display_file(file_path)
 
     def _on_thumbnail_clicked(self, file_path: str) -> None:
         """Handle thumbnail click event.

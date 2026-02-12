@@ -1,0 +1,761 @@
+{
+  "6": {
+    "inputs": {
+      "text": [
+        "87:127",
+        0
+      ],
+      "clip": [
+        "113",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "7": {
+    "inputs": {
+      "text": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
+      "clip": [
+        "113",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative Prompt)"
+    }
+  },
+  "8": {
+    "inputs": {
+      "samples": [
+        "106:93",
+        0
+      ],
+      "vae": [
+        "39",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "39": {
+    "inputs": {
+      "vae_name": "Wan\\wan_2.1_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "72": {
+    "inputs": {
+      "fps": 30.000000000000007,
+      "lossless": false,
+      "quality": 80,
+      "method": "default",
+      "format": "h265-mp4",
+      "images": [
+        "81",
+        0
+      ]
+    },
+    "class_type": "SwarmSaveAnimationWS",
+    "_meta": {
+      "title": "SwarmSaveAnimationWS"
+    }
+  },
+  "75": {
+    "inputs": {
+      "title": "Init Image",
+      "value": "(Do Not Set Me)",
+      "auto_resize": false,
+      "description": "",
+      "order_priority": -9,
+      "is_advanced": false,
+      "raw_id": "initimage",
+      "image": "thumper.png",
+      "group": [
+        "86:1",
+        0
+      ]
+    },
+    "class_type": "SwarmInputImage",
+    "_meta": {
+      "title": "SwarmInputImage"
+    }
+  },
+  "81": {
+    "inputs": {
+      "ckpt_name": "film_net_fp32.pt",
+      "clear_cache_after_n_frames": 10,
+      "multiplier": 2,
+      "frames": [
+        "8",
+        0
+      ]
+    },
+    "class_type": "FILM VFI",
+    "_meta": {
+      "title": "FILM VFI"
+    }
+  },
+  "83": {
+    "inputs": {
+      "title": "Frames",
+      "value": 81,
+      "step": 1,
+      "min": 1,
+      "max": 121,
+      "view_max": 121,
+      "view_type": "slider",
+      "description": "",
+      "order_priority": 0,
+      "is_advanced": false,
+      "raw_id": "",
+      "group": [
+        "86:1",
+        0
+      ]
+    },
+    "class_type": "SwarmInputInteger",
+    "_meta": {
+      "title": "SwarmInputInteger"
+    }
+  },
+  "108": {
+    "inputs": {
+      "title": "Variation Seed",
+      "value": 0,
+      "step": 1,
+      "min": -1,
+      "max": 2147483647,
+      "view_max": 100,
+      "view_type": "seed",
+      "description": "",
+      "order_priority": 0,
+      "is_advanced": false,
+      "raw_id": "variation seed",
+      "group": [
+        "86:1",
+        0
+      ]
+    },
+    "class_type": "SwarmInputInteger",
+    "_meta": {
+      "title": "SwarmInputInteger"
+    }
+  },
+  "109": {
+    "inputs": {
+      "title": "Variation Seed Strength",
+      "value": 0,
+      "step": 0.01,
+      "min": 0,
+      "max": 1,
+      "view_max": 0.2,
+      "view_type": "slider",
+      "description": "",
+      "order_priority": 0,
+      "is_advanced": false,
+      "raw_id": "variation seed strength",
+      "group": [
+        "86:1",
+        0
+      ]
+    },
+    "class_type": "SwarmInputFloat",
+    "_meta": {
+      "title": "SwarmInputFloat"
+    }
+  },
+  "110": {
+    "inputs": {
+      "title": "High Noise Lora",
+      "value": "",
+      "values": "",
+      "description": "",
+      "order_priority": 0,
+      "is_advanced": false,
+      "raw_id": "",
+      "group": [
+        "86:1",
+        0
+      ]
+    },
+    "class_type": "SwarmInputDropdown",
+    "_meta": {
+      "title": "High Noise Lora"
+    }
+  },
+  "111": {
+    "inputs": {
+      "title": "Low Noise Lora",
+      "value": "",
+      "values": "",
+      "description": "",
+      "order_priority": 0,
+      "is_advanced": false,
+      "raw_id": "",
+      "group": [
+        "86:1",
+        0
+      ]
+    },
+    "class_type": "SwarmInputDropdown",
+    "_meta": {
+      "title": "Low Noise Lora"
+    }
+  },
+  "112": {
+    "inputs": {
+      "title": "Lora Strength",
+      "value": 1,
+      "step": 0.05,
+      "min": 0,
+      "max": 1,
+      "view_max": 1.5,
+      "view_type": "slider",
+      "description": "",
+      "order_priority": 0,
+      "is_advanced": false,
+      "raw_id": "",
+      "group": [
+        "86:1",
+        0
+      ]
+    },
+    "class_type": "SwarmInputFloat",
+    "_meta": {
+      "title": "SwarmInputFloat"
+    }
+  },
+  "113": {
+    "inputs": {
+      "clip_name": "umt5-xxl-encoder-Q6_K.gguf",
+      "type": "wan"
+    },
+    "class_type": "CLIPLoaderGGUF",
+    "_meta": {
+      "title": "CLIPLoader (GGUF)"
+    }
+  },
+  "114": {
+    "inputs": {
+      "width": [
+        "87:124",
+        0
+      ],
+      "height": [
+        "87:125",
+        0
+      ],
+      "images": [
+        "75",
+        0
+      ]
+    },
+    "class_type": "KM_Resize_Image",
+    "_meta": {
+      "title": "KM_Resize_Image"
+    }
+  },
+  "115": {
+    "inputs": {
+      "width": [
+        "87:124",
+        0
+      ],
+      "height": [
+        "87:125",
+        0
+      ],
+      "length": [
+        "83",
+        0
+      ],
+      "batch_size": 1,
+      "positive": [
+        "6",
+        0
+      ],
+      "negative": [
+        "7",
+        0
+      ],
+      "vae": [
+        "116",
+        0
+      ],
+      "end_image": [
+        "114",
+        0
+      ]
+    },
+    "class_type": "WanFunInpaintToVideo",
+    "_meta": {
+      "title": "WanFunInpaintToVideo"
+    }
+  },
+  "116": {
+    "inputs": {
+      "vae_name": "Wan\\wan_2.1_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "117": {
+    "inputs": {
+      "aspect_ratio": [
+        "118",
+        1
+      ],
+      "optional_image": [
+        "75",
+        0
+      ]
+    },
+    "class_type": "KM_Aspect_Ratio_Selector",
+    "_meta": {
+      "title": "KM_Aspect_Ratio_Selector"
+    }
+  },
+  "118": {
+    "inputs": {
+      "title": "Aspect Ratio",
+      "value": "",
+      "values": "",
+      "description": "",
+      "order_priority": 0,
+      "is_advanced": false,
+      "raw_id": "",
+      "group": [
+        "86:1",
+        0
+      ]
+    },
+    "class_type": "SwarmInputDropdown",
+    "_meta": {
+      "title": "SwarmInputDropdown"
+    }
+  },
+  "120": {
+    "inputs": {
+      "description": "Wan22-LF2V-Lora - 1.0",
+      "enable_in_simple_tab": false
+    },
+    "class_type": "SwarmWorkflowDescription",
+    "_meta": {
+      "title": "SwarmWorkflowDescription"
+    }
+  },
+  "86:1": {
+    "inputs": {
+      "title": "My Group",
+      "open_by_default": true,
+      "description": "",
+      "order_priority": 0,
+      "is_advanced": false,
+      "can_shrink": true
+    },
+    "class_type": "SwarmInputGroup",
+    "_meta": {
+      "title": "SwarmInputGroup"
+    }
+  },
+  "86:6": {
+    "inputs": {
+      "title": "Prompt",
+      "value": "",
+      "view_type": "normal",
+      "description": "",
+      "order_priority": -10,
+      "is_advanced": false,
+      "raw_id": "prompt",
+      "group": [
+        "86:1",
+        0
+      ]
+    },
+    "class_type": "SwarmInputText",
+    "_meta": {
+      "title": "SwarmInputText"
+    }
+  },
+  "86:2": {
+    "inputs": {
+      "title": "Steps",
+      "value": 8,
+      "step": 2,
+      "min": 0,
+      "max": 100,
+      "view_max": 100,
+      "view_type": "slider",
+      "description": "",
+      "order_priority": 0,
+      "is_advanced": false,
+      "raw_id": "",
+      "group": [
+        "86:1",
+        0
+      ]
+    },
+    "class_type": "SwarmInputInteger",
+    "_meta": {
+      "title": "SwarmInputInteger"
+    }
+  },
+  "86:3": {
+    "inputs": {
+      "title": "Seed",
+      "value": -1,
+      "step": 1,
+      "min": -1,
+      "max": 2147483647,
+      "view_max": 100,
+      "view_type": "seed",
+      "description": "",
+      "order_priority": 0,
+      "is_advanced": false,
+      "raw_id": "",
+      "group": [
+        "86:1",
+        0
+      ]
+    },
+    "class_type": "SwarmInputInteger",
+    "_meta": {
+      "title": "SwarmInputInteger"
+    }
+  },
+  "87:125": {
+    "inputs": {
+      "value": [
+        "117",
+        2
+      ]
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Height"
+    }
+  },
+  "87:127": {
+    "inputs": {
+      "value": [
+        "86:6",
+        0
+      ]
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "Prompt"
+    }
+  },
+  "87:124": {
+    "inputs": {
+      "value": [
+        "117",
+        1
+      ]
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Width"
+    }
+  },
+  "87:126": {
+    "inputs": {
+      "value": [
+        "86:2",
+        0
+      ]
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Steps"
+    }
+  },
+  "87:123": {
+    "inputs": {
+      "value": [
+        "86:3",
+        0
+      ]
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Seed"
+    }
+  },
+  "106:103": {
+    "inputs": {
+      "unet_name": "wan2.2_i2v_high_noise_14B_Q8_0.gguf"
+    },
+    "class_type": "UnetLoaderGGUF",
+    "_meta": {
+      "title": "Unet Loader (GGUF)"
+    }
+  },
+  "106:95": {
+    "inputs": {
+      "unet_name": "wan2.2_i2v_low_noise_14B_Q8_0.gguf"
+    },
+    "class_type": "UnetLoaderGGUF",
+    "_meta": {
+      "title": "Unet Loader (GGUF)"
+    }
+  },
+  "106:93": {
+    "inputs": {
+      "noise_seed": [
+        "87:123",
+        0
+      ],
+      "steps": [
+        "87:126",
+        0
+      ],
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "beta",
+      "start_at_step": [
+        "106:105",
+        0
+      ],
+      "end_at_step": 10000,
+      "var_seed": [
+        "108",
+        0
+      ],
+      "var_seed_strength": [
+        "109",
+        0
+      ],
+      "sigma_max": -1,
+      "sigma_min": -1,
+      "rho": 7,
+      "add_noise": "disable",
+      "return_with_leftover_noise": "disable",
+      "previews": "animate",
+      "tile_sample": false,
+      "tile_size": 1024,
+      "model": [
+        "106:97",
+        0
+      ],
+      "positive": [
+        "115",
+        0
+      ],
+      "negative": [
+        "115",
+        1
+      ],
+      "latent_image": [
+        "106:104",
+        0
+      ]
+    },
+    "class_type": "SwarmKSampler",
+    "_meta": {
+      "title": "SwarmKSampler"
+    }
+  },
+  "106:104": {
+    "inputs": {
+      "noise_seed": [
+        "87:123",
+        0
+      ],
+      "steps": [
+        "87:126",
+        0
+      ],
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "beta",
+      "start_at_step": 0,
+      "end_at_step": [
+        "106:105",
+        0
+      ],
+      "var_seed": [
+        "108",
+        0
+      ],
+      "var_seed_strength": [
+        "109",
+        0
+      ],
+      "sigma_max": -1,
+      "sigma_min": -1,
+      "rho": 7,
+      "add_noise": "enable",
+      "return_with_leftover_noise": "enable",
+      "previews": "animate",
+      "tile_sample": false,
+      "tile_size": 1024,
+      "model": [
+        "106:98",
+        0
+      ],
+      "positive": [
+        "115",
+        0
+      ],
+      "negative": [
+        "115",
+        1
+      ],
+      "latent_image": [
+        "115",
+        2
+      ]
+    },
+    "class_type": "SwarmKSampler",
+    "_meta": {
+      "title": "SwarmKSampler"
+    }
+  },
+  "106:98": {
+    "inputs": {
+      "shift": 8.000000000000002,
+      "model": [
+        "106:102",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingSD3",
+    "_meta": {
+      "title": "ModelSamplingSD3"
+    }
+  },
+  "106:97": {
+    "inputs": {
+      "shift": 8.000000000000002,
+      "model": [
+        "106:99",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingSD3",
+    "_meta": {
+      "title": "ModelSamplingSD3"
+    }
+  },
+  "106:105": {
+    "inputs": {
+      "value": "a/2",
+      "a": [
+        "87:126",
+        0
+      ]
+    },
+    "class_type": "SimpleMath+",
+    "_meta": {
+      "title": "🔧 Simple Math"
+    }
+  },
+  "106:94": {
+    "inputs": {
+      "enable_fp16_accumulation": true,
+      "model": [
+        "106:103",
+        0
+      ]
+    },
+    "class_type": "ModelPatchTorchSettings",
+    "_meta": {
+      "title": "Model Patch Torch Settings"
+    }
+  },
+  "106:106": {
+    "inputs": {
+      "lora_name": [
+        "110",
+        1
+      ],
+      "strength_model": [
+        "112",
+        0
+      ],
+      "model": [
+        "106:94",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "LoraLoaderModelOnly"
+    }
+  },
+  "106:96": {
+    "inputs": {
+      "enable_fp16_accumulation": true,
+      "model": [
+        "106:95",
+        0
+      ]
+    },
+    "class_type": "ModelPatchTorchSettings",
+    "_meta": {
+      "title": "Model Patch Torch Settings"
+    }
+  },
+  "106:107": {
+    "inputs": {
+      "lora_name": [
+        "111",
+        1
+      ],
+      "strength_model": [
+        "112",
+        0
+      ],
+      "model": [
+        "106:96",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "LoraLoaderModelOnly"
+    }
+  },
+  "106:102": {
+    "inputs": {
+      "lora_name": "Wan22\\Wan2.2-Lightning_I2V-A14B-4steps-lora_HIGH_fp16.safetensors",
+      "strength_model": 1.0000000000000002,
+      "model": [
+        "106:106",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "LoraLoaderModelOnly"
+    }
+  },
+  "106:99": {
+    "inputs": {
+      "lora_name": "Wan22\\Wan2.2-Lightning_I2V-A14B-4steps-lora_LOW_fp16.safetensors",
+      "strength_model": 1.0000000000000002,
+      "model": [
+        "106:107",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "LoraLoaderModelOnly"
+    }
+  }
+}

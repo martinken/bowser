@@ -33,7 +33,7 @@ A Qt-based graphical user interface for ComfyUI, designed to provide an intuitiv
 - Metadata viewer for examining generation parameters
 
 ### Settings & Configuration
-- Configurable ComfyUI server address
+- Configurable ComfyUI server address(es) - supports multiple servers
 - Customizable output and workflow directories
 - Dark mode interface
 - Keyboard shortcuts for common actions
@@ -153,10 +153,27 @@ Settings are stored in `bowser-gen.toml` in the application directory:
 
 ```toml
 [settings]
-server_address = "127.0.0.1:8188"
+server_address = "127.0.0.1:8188, 192.168.1.100:8188"  # Multiple servers comma-separated
 output_root = "/path/to/output"
 workflow_root = "/path/to/workflows"
 ```
+
+### Multiple Server Support
+
+`bowser-gen` now supports connecting to multiple ComfyUI servers simultaneously. You can specify multiple server addresses separated by commas in either the command line or settings file.
+
+**Command line usage:**
+```bash
+gen --server 127.0.0.1:8188,192.168.1.100:8188
+```
+
+**Settings file:**
+```toml
+[settings]
+server_address = "127.0.0.1:8188, 192.168.1.100:8188"
+```
+
+The application will connect to all specified servers and use the first available server for job processing.
 
 ### Output Directory Structure
 

@@ -8,7 +8,8 @@ sidecar metadata files.
 import json
 from typing import Any, Dict, Optional, Union
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QMimeData, QUrl, Signal
+from PySide6.QtGui import QDrag, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -28,6 +29,9 @@ class MetadataViewer(QWidget):
     # Constants for text box height management
     COMPACT_TEXT_BOX_HEIGHT = 69
     UNLIMITED_TEXT_BOX_HEIGHT = 16777215  # Maximum possible value for int
+    
+    # Signal emitted when an input file is selected via Ctrl+click
+    input_file_selected = Signal(str)
     """A widget for displaying structured metadata information.
 
     Features include:
@@ -175,10 +179,53 @@ class MetadataViewer(QWidget):
         )  # Align text to top-left
         layout.addWidget(value_label, 1)  # Take remaining space
 
-        # Connect click signal to toggle height
-        value_label.mousePressEvent = lambda e, vl=value_label: (
-            self._toggle_value_height(vl)
-        )
+        # Enable drag and drop for InImage and InVideo fields
+        if label_text.rstrip(":") in ["InImage", "InVideo"]:
+            value_label.setAcceptDrops(True)
+            value_label.installEventFilter(self)
+            value_label.drag_start_position = None # pyright: ignore[reportAttributeAccessIssue]
+            
+            # Connect mouse press event to store drag start position and handle Ctrl+click
+            original_mousePressEvent = value_label.mousePressEvent
+            def mousePressEvent(e):
+                if e.button() == Qt.MouseButton.LeftButton:
+                    value_label.drag_start_position = e.pos() # pyright: ignore[reportAttributeAccessIssue]
+                    
+                    # Check if Ctrl is pressed
+                    if e.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                        # Emit input_file_selected signal with the file path
+                        self.input_file_selected.emit(value_label.text())
+                if original_mousePressEvent:
+                    original_mousePressEvent(e)
+            value_label.mousePressEvent = mousePressEvent
+            
+            # Connect mouse move event to initiate drag
+            original_mouseMoveEvent = value_label.mouseMoveEvent
+            def mouseMoveEvent(e):
+                if not value_label.drag_start_position: # pyright: ignore[reportAttributeAccessIssue]
+                    return
+                if e.buttons() != Qt.MouseButton.LeftButton:
+                    return
+                if (e.pos() - value_label.drag_start_position).manhattanLength() < QApplication.startDragDistance(): # pyright: ignore[reportAttributeAccessIssue]
+                    return
+                
+                # Create drag object
+                drag = QDrag(value_label)
+                mime_data = QMimeData()
+                url = QUrl.fromLocalFile(value_label.text())
+                mime_data.setUrls([url])
+                drag.setMimeData(mime_data)
+                drag.setPixmap(QPixmap())
+                drag.exec(Qt.DropAction.CopyAction | Qt.DropAction.MoveAction)
+                
+                if original_mouseMoveEvent:
+                    original_mouseMoveEvent(e)
+            value_label.mouseMoveEvent = mouseMoveEvent
+        else:
+            # Connect click signal to toggle height for non-draggable fields
+            value_label.mousePressEvent = lambda e, vl=value_label: (
+                self._toggle_value_height(vl)
+            )
 
         # Copy button
         copy_button = QPushButton("📋")
@@ -231,6 +278,24 @@ class MetadataViewer(QWidget):
         QApplication.setOverrideCursor(Qt.CursorShape.PointingHandCursor)
         QApplication.processEvents()
         QApplication.restoreOverrideCursor()
+
+    def eventFilter(self, obj, event):
+        """Event filter to handle drag and drop events.
+
+        Args:
+            obj: The object that received the event
+            event: The event
+        
+        Returns:
+            bool: True if the event was handled, False otherwise
+        """
+        # Handle drag leave events for draggable labels
+        if event.type() == event.Type.DragLeave:
+            # Reset drag start position when leaving the widget
+            if hasattr(obj, 'drag_start_position'):
+                obj.drag_start_position = None
+        
+        return super().eventFilter(obj, event)
 
     def _toggle_value_height(self, value_label: QLabel) -> None:
         """Toggle the maximum height of a value label between unlimited and compact height.

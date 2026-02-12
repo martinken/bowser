@@ -16,13 +16,18 @@ Key Features:
     - Keyboard shortcuts for efficient navigation
 
 Usage:
-    python main.py [folder_path]
+    python main.py [folder_path] [--compact_view]
 
 Where [folder_path] is an optional path to a folder or file to open initially.
 
-Example:
+Options:
+    --compact_view    Start the application in compact view mode (1216x515 window with specific splitter sizes)
+
+Examples:
     python main.py /path/to/images
     python main.py image.jpg
+    python main.py --compact_view
+    python main.py /path/to/images --compact_view
 """
 
 import sys
@@ -56,6 +61,11 @@ def main() -> int:
     arg_parser.add_argument(
         "file", type=str, nargs="?", help="Image file or folder to open initially"
     )
+    arg_parser.add_argument(
+        "--compact_view",
+        action="store_true",
+        help="Start the application in compact view mode (1216x515 window with specific splitter sizes)"
+    )
     args = arg_parser.parse_args()
 
     # Initialize Qt application
@@ -64,6 +74,10 @@ def main() -> int:
     # Create main window with optional folder path
     folder_path = args.file if args.file else None
     main_window = ViewMain(folder_path=folder_path)
+
+    # Apply compact view if requested
+    if args.compact_view:
+        main_window._set_compact_view()
 
     # Show the main window and start the application
     main_window.show()

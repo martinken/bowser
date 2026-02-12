@@ -1,11 +1,9 @@
-import copy
 import io
 import json
 import os
 import struct
 import time
 from collections import deque
-from random import randint
 
 import cv2
 from core.imageviewer import ImageViewer
@@ -23,11 +21,8 @@ from PIL.PngImagePlugin import PngInfo
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
-    QFrame,
-    QHBoxLayout,
     QLabel,
     QMessageBox,
-    QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -37,544 +32,8 @@ from PySide6.QtWidgets import (
 )
 
 from .comfyserver import comfyServer
-
-# workflow:gpu:rate
-# Performance data based on GPU compute power and VRAM capacity
-# Values represent operations per second (higher is better)
-# RTX 3090 used as baseline reference (600,000 ops/sec)
-performance_data = {
-    "Wan22-I2V-Lora-Lightning-API": {"3090": 566065, "5090": 1850000},
-    "z_image_turbo-API": {"3090": 800920, "5090": 1900000},
-    "Wan22-Extend-24G-Q6-API": {"3090": 500000, "5090": 1750000},
-    # Performance estimates for various GPUs
-    "Guesses": {
-        # NVIDIA RTX 30 Series
-        "3090": 600000,  # Baseline reference
-        "3090ti": 650000,  # Slightly faster than 3090
-        "3080ti": 550000,  # Similar to 3090 but with less VRAM
-        "3080": 500000,  # Good performance, 10GB VRAM
-        "3070ti": 420000,  # Slightly faster than 3070
-        "3070": 400000,  # Mid-range, 8GB VRAM
-        "3060ti": 350000,  # Good value, 8GB VRAM
-        "3060": 280000,  # Entry level, 12GB VRAM but slower
-        # NVIDIA RTX 40 Series
-        "4090": 1100000,  # Much faster than 3090
-        "4080": 900000,  # Fast, 16GB VRAM
-        "4070ti": 750000,  # Good performance
-        "4070": 650000,  # Mid-range
-        "4060ti": 500000,  # Good value
-        "4060": 400000,  # Entry level
-        # NVIDIA RTX 20 Series (older generation)
-        "2080ti": 350000,  # Older but still capable
-        "2080super": 300000,
-        "2080": 280000,
-        "2070super": 250000,
-        "2070": 230000,
-        "2060super": 200000,
-        "2060": 180000,
-        # NVIDIA RTX 50 Series
-        "5090": 1500000,  # Next-gen flagship
-        "5080": 900000,  # Next-gen high-end
-        "5070": 650000,  # Mid-range
-        "5060": 400000,  # Entry level
-        # AMD Radeon GPUs (estimated based on relative performance)
-        "rx7900xtx": 700000,  # AMD flagship
-        "rx7900xt": 650000,
-        "rx7800xt": 550000,
-        "rx6950xt": 500000,  # Older AMD high-end
-        "rx6900xt": 480000,
-        "rx6800xt": 450000,
-        "rx6800": 420000,
-        "rx6700xt": 380000,
-        # Laptop GPUs (lower performance due to power limits)
-        "3080laptop": 400000,  # Laptop version of 3080
-        "3070laptop": 320000,  # Laptop version of 3070
-        "4070laptop": 550000,  # Laptop version of 4070
-        "4060laptop": 350000,  # Laptop version of 4060
-    },
-}
-
-
-class Job:
-    def __init__(self, workflow_name, workflow, count, parent=None):
-        self._workflow = workflow
-        self.workflow_name = workflow_name
-        self.completions = 0
-        self.count = count
-        self.start_seed = -1
-        self.results = {}
-        self.error = False
-        self.ops = 1
-        self.estimated_runtime = 1.0
-        self.compute_ops()
-
-    def compute_estimated_runtime(self, rate):
-        self.estimated_runtime = self.count * self.ops / rate
-
-    def get_remaining_estimated_runtime(self):
-        if len(self.results) > 0 and "start_time" in self.results[0]:
-            return (
-                self.estimated_runtime
-                - time.time()
-                + self.results[self.completions]["start_time"]
-            )
-        else:
-            return self.estimated_runtime
-
-    def compute_ops(self):
-        metadata = {}
-        width = 1000
-        height = 1000
-        for id, node in self._workflow.items():
-            if node["class_type"].startswith("SwarmInput"):
-                # extract important values from workflow
-                node_metadata = {}
-
-                # extract dimension in case we find no other dims
-                if node["class_type"] == "SwarmInputImage":
-                    width = node["input_width"]
-                    height = node["input_height"]
-                elif node["class_type"] == "SwarmInputVideo":
-                    width = node["input_width"]
-                    height = node["input_height"]
-
-                # Get title for identification
-                if "title" in node.get("inputs", {}):
-                    node_metadata["title"] = node["inputs"]["title"]
-
-                # Extract Steps, Width, Height, Aspect Ratio, Frames based on title
-                title_lower = node_metadata.get("title", "").lower()
-
-                # Check if this node contains a value we're interested in
-                if "value" in node.get("inputs", {}):
-                    value = node["inputs"]["value"]
-
-                    # Try to extract Steps
-                    if "steps" in title_lower or "step" in title_lower:
-                        node_metadata["steps"] = value
-                    # Try to extract Width
-                    elif "width" in title_lower:
-                        node_metadata["width"] = value
-                    # Try to extract Height
-                    elif "height" in title_lower:
-                        node_metadata["height"] = value
-                    # Try to extract Aspect Ratio
-                    elif "aspect" in title_lower or "ratio" in title_lower:
-                        node_metadata["aspectratio"] = value
-                    # Try to extract Frames
-                    elif "frames" in title_lower or "frame" in title_lower:
-                        node_metadata["frames"] = value
-                    # Try to extract Frames
-                    elif "cfg" in title_lower or "cfgscale" in title_lower:
-                        node_metadata["cfg"] = value
-
-                # Only add to metadata_list if we found relevant data
-                if node_metadata:
-                    metadata.update(node_metadata)
-
-        # Process metadata to extract width and height from aspectratio if needed
-        # If width and height are missing, try to extract them from the aspectratio field
-        # examples "1M  4:3 1152, 864" would be 1152 width and 864 height
-        if metadata.get("width") is None or metadata.get("height") is None:
-            aspectratio = metadata.get("aspectratio", "")
-            if aspectratio:
-                # Try to extract width and height from aspectratio
-                # Pattern: look for two numbers separated by comma or space
-                import re
-
-                match = re.search(r"(\d+)\s*[xX,]\s*(\d+)", str(aspectratio))
-                if match:
-                    if metadata.get("width") is None:
-                        metadata["width"] = match.group(1)
-                    if metadata.get("height") is None:
-                        metadata["height"] = match.group(2)
-
-        # Compute total of width*height*steps*frames
-        width = int(metadata.get("width", width))
-        height = int(metadata.get("height", height))
-        steps = int(metadata.get("steps", 10))
-        frames = int(metadata.get("frames", 1))
-        cfg = float(metadata.get("cfg", 1.0))
-        # when cfg is 1.0 samplers only run once per step at anything higher
-        # they run twice, but some workflows only use cfg for one of the
-        # samplers in a multisampler setup, so we cap it at 1.6 to avoid
-        # massively overestimating runtime for some workflows
-        if cfg > 1.0:
-            cfg = 1.6
-        self.ops = width * height * steps * frames * cfg
-
-    def set_start_time(self, timestamp):
-        self.results[self.completions]["start_time"] = timestamp
-
-    def set_end_time(self, timestamp):
-        self.results[self.completions]["end_time"] = timestamp
-        self.results[self.completions]["elapsed_time"] = round(
-            timestamp - self.results[self.completions]["start_time"], 2
-        )
-
-    def is_completed(self):
-        return self.completions >= self.count
-
-    def _replace_random_syntax(self, text, seed):
-        """Replace <random:...> syntax in text with random selections.
-
-        Uses the provided seed for deterministic results.
-        Supports:
-        - <random:val1, val2, val3> - random selection from list
-        - <random:val1|val2|val3> - pipe separator for values with commas
-        - <random:1-5> - integer ranges
-        - <random:0.8-1.2> - float ranges with decimal precision
-        - <random[2-4]:val1, val2> - repeat 2-4 times without repetition
-        - <random[2-4,]:val1, val2> - repeat with comma separator
-
-        Args:
-            text (str): Text containing <random:...> patterns
-            seed (int): Seed for random number generation
-
-        Returns:
-            str: Text with random patterns replaced
-        """
-        import random
-        import re
-
-        # Create a seeded random instance
-        rng = random.Random(seed)
-
-        # Pattern to match <random[repeat]:options> or <random:options>
-        pattern = r"<random(?:\[(\d+(?:-\d+)?)(,?)\])?:([^>]+)>"
-
-        def replace_match(match):
-            repeat_spec = match.group(1)  # e.g., "2" or "2-4"
-            comma_sep = match.group(2)  # "," if comma separator requested
-            options_str = match.group(3)  # The options list
-
-            # Determine separator (| is preferred if it appears more than ,)
-            if options_str.count("|") > options_str.count(","):
-                separator = "|"
-            else:
-                separator = ","
-
-            # Split options
-            options = [opt.strip() for opt in options_str.split(separator)]
-
-            # Process each option for ranges
-            expanded_options = []
-            for opt in options:
-                # Check for numeric range (int or float)
-                range_match = re.match(r"^(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)$", opt)
-                if range_match:
-                    start_str, end_str = range_match.groups()
-
-                    # Check if it's a float range
-                    if "." in start_str or "." in end_str:
-                        # Float range - determine decimal places
-                        decimal_places = max(
-                            len(start_str.split(".")[-1]) if "." in start_str else 0,
-                            len(end_str.split(".")[-1]) if "." in end_str else 0,
-                        )
-                        start = float(start_str)
-                        end = float(end_str)
-
-                        # Generate range with appropriate step
-                        step = 10 ** (-decimal_places)
-                        current = start
-                        while current <= end + step / 2:  # Add small epsilon for float comparison
-                            expanded_options.append(f"{current:.{decimal_places}f}")
-                            current += step
-                    else:
-                        # Integer range
-                        start = int(start_str)
-                        end = int(end_str)
-                        expanded_options.extend([str(i) for i in range(start, end + 1)])
-                else:
-                    expanded_options.append(opt)
-
-            # Determine how many times to repeat
-            if repeat_spec:
-                if "-" in repeat_spec:
-                    min_repeat, max_repeat = map(int, repeat_spec.split("-"))
-                    repeat_count = rng.randint(min_repeat, max_repeat)
-                else:
-                    repeat_count = int(repeat_spec)
-            else:
-                repeat_count = 1
-
-            # Select random options (without repetition if possible)
-            if repeat_count <= len(expanded_options):
-                selected = rng.sample(expanded_options, repeat_count)
-            else:
-                # If more repeats than options, allow repetition
-                selected = rng.choices(expanded_options, k=repeat_count)
-
-            # Join with appropriate separator
-            if comma_sep:
-                return ", ".join(selected)
-            else:
-                return " ".join(selected)
-
-        # Replace all matches
-        result = re.sub(pattern, replace_match, text)
-        return result
-
-    def get_workflow(self, comfy_server):
-        workflow = copy.deepcopy(self._workflow)
-        self.results[self.completions] = {}
-        if self.completions == 0:
-            self.results[0]["input_images"] = {}
-            self.results[0]["input_videos"] = {}
-        for id, node in workflow.items():
-            # remove any options entries
-            if "options" in node:
-                del node["options"]
-            # replace any seed nodes that have -1 as a value
-            if node["class_type"] == "SwarmInputInteger":
-                if (
-                    node["inputs"]["view_type"] == "seed"
-                    and node["inputs"]["value"] == -1
-                ):
-                    if self.start_seed == -1:
-                        self.start_seed = randint(0, 2**63 - 1)
-                    node["inputs"]["value"] = self.start_seed + self.completions
-
-            # send any input images over when the completions are zero
-            # otherwise assume they are already there
-            if node["class_type"] == "SwarmInputImage":
-                if self.completions == 0:
-                    image_path = node["inputs"]["image"]
-                    self.results[0]["input_images"][id] = image_path
-                    file_ext = os.path.splitext(image_path)[1].lstrip(".")
-                    result = comfy_server.upload_image(
-                        node["inputs"]["image"],
-                        f"dueser.{file_ext}",
-                        image_type="input",
-                        overwrite=False,
-                    )
-                    self._image_name = result["name"]
-                node["inputs"]["image"] = self._image_name
-
-            # send any input videos over when the completions are zero
-            # otherwise assume they are already there
-            if node["class_type"] == "SwarmInputVideo":
-                if self.completions == 0:
-                    video_path = node["inputs"]["video"]
-                    self.results[0]["input_videos"][id] = video_path
-                    file_ext = os.path.splitext(video_path)[1].lstrip(".")
-                    result = comfy_server.upload_video(
-                        node["inputs"]["video"],
-                        f"dueser.{file_ext}",
-                        image_type="input",
-                        overwrite=False,
-                    )
-                    self._video_name = result["name"]
-                node["inputs"]["video"] = self._video_name
-
-            # Handle SwarmInputText nodes with view_type of prompt
-            if node["class_type"] == "SwarmInputText":
-                if node["inputs"].get("view_type") == "prompt" and "value" in node["inputs"]:
-                    original_prompt = node["inputs"]["value"]
-
-                    # Perform random replacements using the seed
-                    if self.start_seed == -1:
-                        self.start_seed = randint(0, 2**63 - 1)
-                    modified_prompt = self._replace_random_syntax(original_prompt, self.start_seed + self.completions)
-                    # Store the original prompt for reference if different from the modified_prompt
-                    if modified_prompt != original_prompt:
-                        self.results[self.completions]["original_prompt"] = original_prompt
-                    node["inputs"]["value"] = modified_prompt
-
-        self.results[self.completions]["seed"] = self.start_seed + self.completions
-        self.results[self.completions]["submitted_workflow"] = workflow
-
-        return workflow
-
-    def add_completion(self):
-        self.completions += 1
-
-
-class JobWidget(QFrame):
-    """A widget to display a queued job with its name, count, and progress."""
-
-    # Signal emitted when the job is canceled
-    job_canceled = Signal(object)
-    # Signal emitted when the job is reloaded
-    reload_job = Signal(object)
-    # Signal emitted when the job widget is clicked (excluding buttons)
-    job_selected = Signal(object)
-
-    def __init__(self, job, parent=None):
-        super().__init__(parent)
-
-        self.job = job
-
-        self.setObjectName("QueuedJobWidget")
-
-        # Create main layout
-        layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(3)
-
-        hlayout = QHBoxLayout()
-        hlayout.setContentsMargins(0, 0, 0, 0)
-
-        # Workflow name label
-        self.name_label = QLabel(job.workflow_name)
-        self.name_label.setStyleSheet("font-weight: bold;")
-
-        # Count label
-        self.count_label = QLabel(f"{job.completions} of {job.count}")
-
-        # Reload button
-        self.reload_button = QPushButton("←")
-        self.reload_button.setFixedSize(20, 20)
-        self.reload_button.clicked.connect(self._on_reload_clicked)
-
-        # Cancel button
-        self.cancel_button = QPushButton("✕")
-        self.cancel_button.setFixedSize(20, 20)
-        self.cancel_button.clicked.connect(self._on_cancel_clicked)
-
-        # Progress bar
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        self.progress_bar.setFixedHeight(8)
-        self.progress_bar.setTextVisible(False)
-        self.progress_bar.setStyleSheet("""
-            QProgressBar {
-                border-radius: 2px;
-                background-color: #181818;
-                color: black;
-                border-width: 2px;
-                padding: 0px;
-                margin: 1px;
-            }
-            QProgressBar::chunk {
-                background-color: #66F;
-                border-radius: 2px;
-                border-width: 2px;
-                padding: 0px;
-            }
-        """)
-
-        # Second progress bar for elapsed time vs estimated runtime
-        self.elapsed_progress_bar = QProgressBar()
-        self.elapsed_progress_bar.setRange(0, 100)
-        self.elapsed_progress_bar.setValue(0)
-        self.elapsed_progress_bar.setFixedHeight(7)
-        self.elapsed_progress_bar.setTextVisible(False)
-        self.elapsed_progress_bar.setStyleSheet("""
-            QProgressBar {
-                border-radius: 2px;
-                background-color: #181818;
-                color: black;
-                border-width: 2px;
-                padding: 0px;
-                margin: 1px;
-            }
-            QProgressBar::chunk {
-                background-color: #FFD700;
-                border-radius: 2px;
-                border-width: 2px;
-                padding: 0px;
-            }
-        """)
-
-        # Add widgets to layout
-        hlayout.addWidget(self.name_label)
-        hlayout.addWidget(self.count_label)
-        hlayout.addWidget(self.reload_button)
-        hlayout.addWidget(self.cancel_button)
-        layout.addLayout(hlayout)
-        layout.addWidget(self.progress_bar)
-        layout.addWidget(self.elapsed_progress_bar)
-
-        # Set the layout
-        self.setLayout(layout)
-
-        # Add border
-        self.setStyleSheet(
-            "QFrame#QueuedJobWidget { border: 1px solid #666; border-radius: 3px; margin: 1px; padding: 3px;}"
-        )
-
-        # Connect mouse press event to handle clicks
-        self.mousePressEvent = self._on_mouse_press
-
-    def update_count(self):
-        self.count_label.setText(f"{self.job.completions} of {self.job.count}")
-
-    def set_progress(self, value):
-        self.progress_bar.setValue(value * 100.0)
-
-    def set_elapsed_progress(self):
-        """Update the elapsed progress bar based on elapsed time vs estimated runtime."""
-        if not hasattr(self.job, "results") or len(self.job.results) == 0:
-            return
-
-        if 0 not in self.job.results or "start_time" not in self.job.results[0]:
-            return
-
-        try:
-            start_time = self.job.results[0]["start_time"]
-            elapsed_time = time.time() - start_time
-
-            if self.job.estimated_runtime > 0:
-                progress = min(elapsed_time / self.job.estimated_runtime, 1.0)
-                self.elapsed_progress_bar.setValue(round(progress * 100.0))
-        except (KeyError, TypeError, ValueError):
-            # Handle any errors gracefully
-            pass
-
-    def mark_submitted(self):
-        self.setStyleSheet(
-            "QFrame#QueuedJobWidget { border: 1px solid #8f8; border-radius: 3px; margin: 1px; padding: 3px;}"
-        )
-
-    def error(self):
-        self.setStyleSheet(
-            "QFrame#QueuedJobWidget { border: 1px solid #f66; border-radius: 3px; margin: 1px; padding: 3px;}"
-        )
-        self.job.error = True
-
-    def add_completion(self):
-        self.job.add_completion()
-        self.update_count()
-        if self.job.completions == self.job.count:
-            self.mark_completed()
-
-    def mark_completed(self):
-        self.set_progress(1)
-        self.setStyleSheet(
-            "QFrame#QueuedJobWidget { border: 1px solid #88f; border-radius: 3px; margin: 1px; padding: 3px;}"
-        )
-
-    def _on_cancel_clicked(self):
-        """Handle cancel button click."""
-        self.setStyleSheet(
-            "QFrame#QueuedJobWidget { border: 1px solid #fb6; border-radius: 3px; margin: 1px; padding: 3px;}"
-        )
-        self.job_canceled.emit(self)
-        self.job.error = True
-
-    def _on_reload_clicked(self):
-        """Handle reload button click."""
-        self.reload_job.emit(self)
-
-    def _on_mouse_press(self, event):
-        """Handle mouse press event to detect clicks on the widget."""
-        # Get the position of the mouse click
-        pos = event.pos()
-
-        # Check if the click is on one of the buttons
-        # Convert widget coordinates to button coordinates
-        reload_pos = self.reload_button.mapFrom(self, pos)
-        cancel_pos = self.cancel_button.mapFrom(self, pos)
-
-        # If the click is not on either button, emit the job_selected signal
-        if not self.reload_button.rect().contains(
-            reload_pos
-        ) and not self.cancel_button.rect().contains(cancel_pos):
-            self.job_selected.emit(self)
-
+from .job import Job
+from .jobwidget import JobWidget
 
 class QueueWidget(QWidget):
     """A widget containing a QTabWidget with Queue and History tabs."""
@@ -588,11 +47,13 @@ class QueueWidget(QWidget):
     reload_job = Signal(object)
     # Signal emitted when a job is selected and it has a result file to show
     show_file = Signal(str)
+    # Signal emitted when status needs to be updated
+    status_update = Signal(str)
 
-    def __init__(self, parent=None):
+    def __init__(self, index, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Queue Widget")
-
+        self._server_index = index
         self._new_job_widgets = deque()
         self._queue_update_time = 4000  # in ms
         self._active_job_widgets = {}
@@ -600,6 +61,7 @@ class QueueWidget(QWidget):
         self._output_count = 10
         self._output_root = ""
         self._current_device = "unknown"
+        self._paused = False
 
         # Create the main layout
         layout = QVBoxLayout()
@@ -609,6 +71,8 @@ class QueueWidget(QWidget):
         # Create the tab widget
         self.tab_widget = QTabWidget()
         self.tab_widget.setTabPosition(QTabWidget.TabPosition.North)
+        self.tab_widget.setStyleSheet("""QTabBar::tab:selected { background-color: #444; }""")
+
 
         # Create Queue tab
         self.queue_tab = QWidget()
@@ -713,6 +177,23 @@ class QueueWidget(QWidget):
 
     def _init_stats_display(self):
         """Initialize the stats display widgets."""
+        # Pause/Resume button
+        self.pause_button = QPushButton("Pause Queue")
+        self.pause_button.setStyleSheet(
+            """QPushButton {
+                background-color: #a33;
+                color: white;
+                font-weight: bold;
+                padding: 10px;
+                border-radius: 5px;
+                border: none;
+            }
+            QPushButton:hover {
+                background-color: #c22;
+            }"""
+        )
+        self.pause_button.clicked.connect(self._toggle_pause)
+
         # System info section
         self.system_info_label = QLabel("System Information")
         self.system_info_label.setFont(QFont("Arial", 14, QFont.Weight.Bold))
@@ -731,6 +212,8 @@ class QueueWidget(QWidget):
         self.devices_widget.setWordWrap(True)
 
         # Add widgets to stats layout
+        self.stats_layout.addWidget(self.pause_button)
+        self.stats_layout.addSpacing(20)
         self.stats_layout.addWidget(self.system_info_label)
         self.stats_layout.addWidget(self.system_info_widget)
         self.stats_layout.addWidget(self.devices_label)
@@ -740,6 +223,14 @@ class QueueWidget(QWidget):
         self.stats_layout.addStretch()
 
     def _job_canceled(self, job_widget):
+        # Check if the job is in the old job widgets and remove/delete it
+        for old_widget in list(self._old_job_widgets):
+            if old_widget is job_widget:
+                self._old_job_widgets.remove(old_widget)
+                self.history_layout.removeWidget(old_widget)
+                old_widget.deleteLater()
+                break
+
         if job_widget in self._new_job_widgets:
             self._new_job_widgets.remove(job_widget)
             self.queue_layout.removeWidget(job_widget)
@@ -754,6 +245,40 @@ class QueueWidget(QWidget):
 
         # Update the total runtime label after cancellation
         self._update_total_runtime_label()
+
+    def _toggle_pause(self):
+        """Toggle the pause state of the queue."""
+        self._paused = not self._paused
+        if self._paused:
+            self.pause_button.setText("Resume Queue")
+            self.pause_button.setStyleSheet(
+                """QPushButton {
+                    background-color: #3a3;
+                    color: black;
+                    font-weight: bold;
+                    padding: 10px;
+                    border-radius: 5px;
+                    border: none;
+                }
+                QPushButton:hover {
+                    background-color: #2e2;
+                }"""
+            )
+        else:
+            self.pause_button.setText("Pause Queue")
+            self.pause_button.setStyleSheet(
+                """QPushButton {
+                    background-color: #a33;
+                    color: white;
+                    font-weight: bold;
+                    padding: 10px;
+                    border-radius: 5px;
+                    border: none;
+                }
+                QPushButton:hover {
+                    background-color: #c22;
+                }"""
+            )
 
     def _reload_job(self, job_widget):
         """Handle reload button click."""
@@ -818,6 +343,14 @@ class QueueWidget(QWidget):
                 f"Total estimated runtime: {formatted_time} for {len(self._new_job_widgets)} jobs"
             )
 
+    def set_performance_data(self, performance_data):
+        """Set the performance data for this queue widget.
+
+        Args:
+            performance_data (dict): A dictionary containing performance data
+        """
+        self._performance_data = performance_data
+
     def get_performance_rate(self, name, gpu):
         """Get the rate for a workflow and GPU from performance_data.
 
@@ -829,31 +362,31 @@ class QueueWidget(QWidget):
             float: The rate for this workflow and GPU, or an average if not found
         """
         # Check if we have performance data
-        if not performance_data:
+        if not self._performance_data:
             return 100000.0  # Default rate, low end
 
         # Try to get the exact match
-        if name in performance_data and gpu in performance_data[name]:
-            return performance_data[name][gpu]
+        if name in self._performance_data and gpu in self._performance_data[name]:
+            return self._performance_data[name][gpu]
 
         # If workflow_name not found, average all entries that match the GPU
         matching_rates = []
-        for workflow_name, gpu_data in performance_data.items():
+        for workflow_name, gpu_data in self._performance_data.items():
             if gpu in gpu_data:
-                matching_rates.append(performance_data[workflow_name][gpu])
+                matching_rates.append(self._performance_data[workflow_name][gpu])
 
         if matching_rates:
             return sum(matching_rates) / len(matching_rates)
 
         # If GPU not found, average all entries that match the workflow_name
-        if name in performance_data:
-            gpu_rates = list(performance_data[name].values())
+        if name in self._performance_data:
+            gpu_rates = list(self._performance_data[name].values())
             if gpu_rates:
                 return sum(gpu_rates) / len(gpu_rates)
 
         # If neither is found, average all entries
         all_rates = []
-        for workflow_data in performance_data.values():
+        for workflow_data in self._performance_data.values():
             all_rates.extend(workflow_data.values())
 
         if all_rates:
@@ -870,9 +403,26 @@ class QueueWidget(QWidget):
             workflow: The workflow object to execute.
             count (int): The number of times to run the workflow.
         """
+        # Check the workflow to make sure the models are all available
+        missing_models = self._check_workflow_models(workflow)
+
+        if missing_models:
+            missing_models_str = ", ".join(missing_models)
+            print(
+                f"Error: The following models are not available on the ComfyUI server: {missing_models_str}"
+            )
+            # Show a user-friendly error dialog
+            QMessageBox.critical(
+                self,
+                "Missing Models",
+                f"The following models are not available on the ComfyUI server:\n\n{missing_models_str}\n\n"
+                "Please ensure these models are installed in your ComfyUI models directory.",
+                QMessageBox.StandardButton.Ok,
+            )
+            return
+
         # Create a QueuedWorkflow and QueuedWorkflowWidget for this job
         job = Job(workflow_name, workflow, count)
-        # todo compute the rate based on the gpu and workkflow name
         gpu = get_gpu_from_device_string(self._current_device)
         rate = self.get_performance_rate(workflow_name, gpu)
         job.compute_estimated_runtime(rate)
@@ -890,84 +440,81 @@ class QueueWidget(QWidget):
 
     def _on_text_message_received(self, messagestr):
         """Handle incoming text messages."""
-        try:
-            # print(messagestr)
-            message = json.loads(messagestr)
-            if message["type"] == "progress":
-                data = message["data"]
-                current_step = data["value"]
-                if "prompt_id" in data:
-                    prompt_id = data["prompt_id"]
-                    self._last_prompt_id = prompt_id
-                    if prompt_id in self._active_job_widgets:
-                        self._active_job_widgets[prompt_id].set_progress(
-                            current_step / data["max"]
-                        )
-                        self._active_job_widgets[prompt_id].set_elapsed_progress()
+        # print(messagestr)
+        message = json.loads(messagestr)
+        if message["type"] == "progress":
+            data = message["data"]
+            current_step = data["value"]
+            if "prompt_id" in data:
+                prompt_id = data["prompt_id"]
+                self._last_prompt_id = prompt_id
+                if prompt_id in self._active_job_widgets:
+                    self._active_job_widgets[prompt_id].set_progress(
+                        current_step / data["max"]
+                    )
+                    self._active_job_widgets[prompt_id].set_elapsed_progress()
 
-            if message["type"] == "execution_start":
-                data = message["data"]
-                if "prompt_id" in data:
-                    prompt_id = data["prompt_id"]
-                    self._last_prompt_id = prompt_id
-                    if prompt_id in self._active_job_widgets:
-                        active_widget = self._active_job_widgets[prompt_id]
-                        active_widget.job.set_start_time(time.time())
+        if message["type"] == "execution_start":
+            data = message["data"]
+            if "prompt_id" in data:
+                prompt_id = data["prompt_id"]
+                self._last_prompt_id = prompt_id
+                if prompt_id in self._active_job_widgets:
+                    active_widget = self._active_job_widgets[prompt_id]
+                    active_widget.job.set_start_time(time.time())
 
-            if message["type"] == "execution_success":
-                data = message["data"]
-                self.image_viewer.clear()
-                if "prompt_id" in data:
-                    prompt_id = data["prompt_id"]
-                    self._last_prompt_id = prompt_id
-                    if prompt_id in self._active_job_widgets:
-                        active_widget = self._active_job_widgets[prompt_id]
-                        active_widget.job.set_end_time(time.time())
-                        # get the results through a history call
-                        # history = self._comfy_server.get_history(prompt_id)
-                        results = self._comfy_server.get_results(prompt_id)
-                        # Save all result images
-                        for result in results:
-                            if "image_data" in result:
-                                image = Image.open(io.BytesIO(result["image_data"]))
-                                self._save_result_image(image)
-                            elif "video_data" in result:
-                                # Save video data
-                                self._save_result_video(result["video_data"])
-                        active_widget.add_completion()
+        if message["type"] == "execution_success":
+            data = message["data"]
+            self.image_viewer.clear()
+            if "prompt_id" in data:
+                prompt_id = data["prompt_id"]
+                self._last_prompt_id = prompt_id
+                if prompt_id in self._active_job_widgets:
+                    active_widget = self._active_job_widgets[prompt_id]
+                    active_widget.job.set_end_time(time.time())
+                    # get the results through a history call
+                    # history = self._comfy_server.get_history(prompt_id)
+                    results = self._comfy_server.get_results(prompt_id)
+                    # Save all result images
+                    for result in results:
+                        if "image_data" in result:
+                            image = Image.open(io.BytesIO(result["image_data"]))
+                            self._save_result_image(image)
+                        elif "video_data" in result:
+                            # Save video data
+                            self._save_result_video(result["video_data"])
+                    active_widget.add_completion()
 
-                        if self._active_job_widgets[prompt_id].job.is_completed():
-                            widget = self._new_job_widgets.popleft()
-                            widget.mark_completed()
-                            del self._active_job_widgets[prompt_id]
-                            self._old_job_widgets.append(widget)
-                            self.queue_layout.removeWidget(widget)
-                            self.history_layout.insertWidget(0, widget)
-                            # Update total runtime label after job completion
-                            self._update_total_runtime_label()
-                        else:
-                            del self._active_job_widgets[prompt_id]
-                            if not active_widget.job.error:
-                                queue_result = self._comfy_server.queue_prompt(
-                                    active_widget.job
-                                )
-                                self._active_job_widgets[queue_result["prompt_id"]] = (
-                                    active_widget
-                                )
+                    if active_widget.job.is_completed():
+                        widget = self._new_job_widgets.popleft()
+                        widget.mark_completed()
+                        del self._active_job_widgets[prompt_id]
+                        self._old_job_widgets.append(widget)
+                        self.queue_layout.removeWidget(widget)
+                        self.history_layout.insertWidget(0, widget)
+                        # Update total runtime label after job completion
+                        self._update_total_runtime_label()
+                    else:
+                        del self._active_job_widgets[prompt_id]
+                        if not active_widget.job.error and not self._paused:
+                            queue_result = self._comfy_server.queue_prompt(
+                                active_widget.job
+                            )
+                            self._active_job_widgets[queue_result["prompt_id"]] = (
+                                active_widget
+                            )
 
-            if message["type"] == "execution_error":
-                data = message["data"]
-                if "prompt_id" in data:
-                    prompt_id = data["prompt_id"]
-                    self._last_prompt_id = prompt_id
-                    if prompt_id in self._active_job_widgets:
-                        self._active_job_widgets[prompt_id].error()
-                error_msg = self._format_error_message(data)
-                QMessageBox.critical(
-                    self, "Execution Error", error_msg, QMessageBox.StandardButton.Ok
-                )
-        except Exception as e:
-            print(f"Error parsing message: {e}")
+        if message["type"] == "execution_error":
+            data = message["data"]
+            if "prompt_id" in data:
+                prompt_id = data["prompt_id"]
+                self._last_prompt_id = prompt_id
+                if prompt_id in self._active_job_widgets:
+                    self._active_job_widgets[prompt_id].error()
+            error_msg = self._format_error_message(data)
+            QMessageBox.critical(
+                self, "Execution Error", error_msg, QMessageBox.StandardButton.Ok
+            )
 
     def _format_error_message(self, error_data):
         """Format error data into a readable message."""
@@ -1008,6 +555,9 @@ class QueueWidget(QWidget):
                 data = bytesmessage[8:]
                 image = Image.open(io.BytesIO(data))
                 self.image_viewer.setPILImage(image)
+            elif type_num == 5:  # swarmui mp4 result, 6 is webm 7 is prores
+                data = bytesmessage[8:]
+                self._save_result_video(data)
         elif event_type == 4:  # preview image with metadata
             metadata_length = struct.unpack(">I", bytesmessage[4:8])[0]
             # metadata = json.loads(bytesmessage[8 : 8 + metadata_length].decode("utf-8"))
@@ -1021,7 +571,7 @@ class QueueWidget(QWidget):
                 if len(self._output_root):
                     dir = f"{self._output_root}/{dir}"
                 os.makedirs(dir, exist_ok=True)
-                full_name = f"{dir}/bowser-temp-preview.webp"
+                full_name = f"{dir}/bowser-temp-preview{self._server_index}.webp"
                 image.save(full_name, format="WEBP", save_all=True)
                 self.image_viewer.setImageFile(full_name)
             else:
@@ -1090,6 +640,24 @@ class QueueWidget(QWidget):
 
         return parameters
 
+    def _update_performance_data(self, workflow_name, device, generation_time, ops):
+        # ignore instant generations or empty workflows
+        if generation_time <= 0 or ops <= 0:
+            return
+        
+        gpu = get_gpu_from_device_string(device)
+        # remember is is a reference to a dict, so updates will be reflected in the original dict
+        if gpu and workflow_name:
+            # Update the performance data with a simple moving average
+            if workflow_name not in self._performance_data:
+                self._performance_data[workflow_name] = {}
+            if gpu in self._performance_data[workflow_name]:
+                old_rate = self._performance_data[workflow_name][gpu]
+                new_rate = ops / generation_time
+                self._performance_data[workflow_name][gpu] = round(0.9*old_rate + 0.1*new_rate)
+            else:
+                self._performance_data[workflow_name][gpu] = round(ops / generation_time)
+
     def _save_result_image(self, image):
         dir = replace_variables_in_string("%year%-%month%-%day%")
         if len(self._output_root):
@@ -1097,7 +665,7 @@ class QueueWidget(QWidget):
         os.makedirs(dir, exist_ok=True)
         self._output_count = (self._output_count - 9) % 90 + 10
         filename = replace_variables_in_string(
-            f"%year%%month%%day%%hour%%minute%%second%-{self._output_count}.png"
+            f"%year%%month%%day%%hour%%minute%%second%-{self._server_index}{self._output_count}.png"
         )
         full_name = f"{dir}/{filename}"
         if self._last_prompt_id in self._active_job_widgets:
@@ -1106,6 +674,11 @@ class QueueWidget(QWidget):
             widget.job.results[widget.job.completions]["output_files"] = [full_name]
             # Save workflow and count as metadata in the image
             datmetadata = self._build_metadata_for_result(widget.job)
+            self._update_performance_data(
+                widget.job.workflow_name, 
+                self._current_device, 
+                datmetadata["bowser_params"]["generation_time"],
+                widget.job.ops)
             dat = json.dumps(datmetadata)
             metadata = PngInfo()
             metadata.add_text("parameters", dat)
@@ -1120,13 +693,18 @@ class QueueWidget(QWidget):
         os.makedirs(dir, exist_ok=True)
         self._output_count = (self._output_count - 9) % 90 + 10
         filename = replace_variables_in_string(
-            f"%year%%month%%day%%hour%%minute%%second%-{self._output_count}.mp4"
+            f"%year%%month%%day%%hour%%minute%%second%-{self._server_index}{self._output_count}.mp4"
         )
         full_name = f"{dir}/{filename}"
         if self._last_prompt_id in self._active_job_widgets:
             widget = self._active_job_widgets[self._last_prompt_id]
 
             metadata = self._build_metadata_for_result(widget.job)
+            self._update_performance_data(
+                widget.job.workflow_name, 
+                self._current_device, 
+                metadata["bowser_params"]["generation_time"],
+                widget.job.ops)
             swarm_json_path = get_swarm_json_path(full_name)
             try:
                 with open(swarm_json_path, "w") as json_file:
@@ -1169,7 +747,7 @@ class QueueWidget(QWidget):
                 return
 
             # Get system stats from the server
-            system_stats = self._comfy_server.get_system_stats("stats")
+            system_stats: dict = self._comfy_server.get_system_stats()
 
             # Format and display system information
             system_info_lines = []
@@ -1291,12 +869,21 @@ class QueueWidget(QWidget):
             job_widget.set_elapsed_progress()
 
         # move to next job if ready
-        if len(self._active_job_widgets) == 0 and len(self._new_job_widgets) > 0:
-            job_widget = self._new_job_widgets[0]
-            if not job_widget.job.error:
-                queue_result = self._comfy_server.queue_prompt(job_widget.job)
-                self._active_job_widgets[queue_result["prompt_id"]] = job_widget
-                self._active_job_widgets[queue_result["prompt_id"]].mark_submitted()
+        if len(self._active_job_widgets) == 0 and len(self._new_job_widgets) > 0 and not self._paused:
+            # start the first new_job without an error
+            for job_widget in self._new_job_widgets:
+                if not job_widget.job.error:
+                    queue_result = self._comfy_server.queue_prompt(job_widget.job)
+                    if "error" in queue_result:
+                        job_widget.error()
+                        error_msg = f"Error queuing job: {queue_result['error']}"
+                        QMessageBox.critical(
+                            self, "Queue Error", error_msg, QMessageBox.StandardButton.Ok
+                        )
+                        continue
+                    self._active_job_widgets[queue_result["prompt_id"]] = job_widget
+                    self._active_job_widgets[queue_result["prompt_id"]].mark_submitted()
+                    break
 
     def clear_history(self):
         """Clear the history tab by removing all completed job widgets."""
@@ -1310,3 +897,188 @@ class QueueWidget(QWidget):
 
         # Clear the old job widgets deque
         self._old_job_widgets.clear()
+
+    def _find_alternative_model(self, model_name, available_models, node_data):
+        """Find an alternative model when the requested model is not available.
+
+        This method tries to find alternative models by:
+        1. For GGUF models: trying different quantizations (Q8 -> Q6 -> Q4, etc.)
+        2. For FP16 models: trying other precision (FP16 -> FP8)
+        3. For other models: looking for similar names
+
+        Args:
+            model_name: The name of the model to find an alternative for
+            available_models: List of available model names
+            node_data: The node data dictionary
+
+        Returns:
+            str: The alternative model name if found, None otherwise
+        """
+        # Check if it's a GGUF model
+        if model_name.endswith(".gguf"):
+            # Try different quantizations
+            quantization_levels = [
+                "Q8_0",
+                "Q6_K",
+                "Q5_K_M",
+                "Q5_K_S",
+                "Q5_1",
+                "Q5_0",
+                "Q4_K_M",
+                "Q4_K_S",
+            ]
+            base_name = model_name.replace(".gguf", "")
+
+            # Extract the current quantization if present
+            current_quant = None
+            for quant in quantization_levels:
+                if quant in base_name:
+                    current_quant = quant
+                    break
+
+            # If we found a quantization, try others
+            if current_quant:
+                for quant in quantization_levels:
+                    if quant == current_quant:
+                        continue
+                    # Try to replace the quantization
+                    alternative = (
+                        base_name.replace(current_quant, quant) + ".gguf"
+                    )
+                    if alternative in available_models:
+                        return alternative
+
+            # If no quantization found or none worked, try common patterns
+            for quant in quantization_levels:
+                # Try adding quantization suffix
+                alternative = f"{base_name}_{quant}.gguf"
+                if alternative in available_models:
+                    return alternative
+
+                # Try uppercase quantization suffix
+                alternative = f"{base_name}_{quant.upper()}.gguf"
+                if alternative in available_models:
+                    return alternative
+
+        # Check if it's an FP16 model
+        elif "fp16" in model_name.lower():
+            base_name = model_name.replace(".fp16", "").replace("fp16", "")
+
+            # Try FP8 version
+            alternative = f"{base_name}.fp8"
+            if alternative in available_models:
+                return alternative
+
+            # Try lowercase fp8
+            alternative = f"{base_name}.fp8"
+            if alternative in available_models:
+                return alternative
+
+        # Check if it's a safetensors model
+        elif model_name.endswith(".safetensors"):
+            base_name = model_name.replace(".safetensors", "")
+
+            # Try .ckpt version
+            alternative = f"{base_name}.ckpt"
+            if alternative in available_models:
+                return alternative
+
+        # Try to find any model with similar name (fallback)
+        base_name = model_name.split("_")[0]  # Get base name before any suffix
+        for available_model in available_models:
+            if base_name.lower() in available_model.lower():
+                return available_model
+
+        return None
+
+    def _check_workflow_models(self, workflow):
+        """Check if all models required by the workflow are available on the ComfyUI server.
+
+        Args:
+            workflow: The workflow dictionary
+
+        Returns:
+            list: List of missing model names, empty if all models are available
+        """
+        if not self._comfy_server or not self._comfy_server.is_connected():
+            print(
+                "Warning: ComfyUI server not connected, cannot check model availability"
+            )
+            return []
+
+        models = self._comfy_server.get_all_models_available()
+
+        # List of node classes that load models
+        model_loader_classes = [
+            "UnetLoaderGGUF",
+            "VAELoader",
+            "CLIPLoaderGGUF",
+            "CheckpointLoaderSimple",
+            "LoraLoader",
+            "ModelLoader",
+            "UNETLoader",
+        ]
+
+        missing_models = []
+
+        # Check each node in the workflow
+        for node_id, node_data in workflow.items():
+            class_type = node_data.get("class_type", "")
+
+            # Check if this node loads a model
+            if class_type in model_loader_classes:
+                inputs = node_data.get("inputs", {})
+
+                # Get the model name from the appropriate input field
+                if class_type == "UnetLoaderGGUF" and "unet_name" in inputs:
+                    model_name = inputs["unet_name"]
+                elif class_type == "UNETLoader" and "unet_name" in inputs:
+                    model_name = inputs["unet_name"]
+                elif class_type == "VAELoader" and "vae_name" in inputs:
+                    model_name = inputs["vae_name"]
+                elif class_type == "CLIPLoaderGGUF" and "clip_name" in inputs:
+                    model_name = inputs["clip_name"]
+                elif class_type == "CheckpointLoaderSimple" and "ckpt_name" in inputs:
+                    model_name = inputs["ckpt_name"]
+                elif class_type == "LoraLoader" and "lora_name" in inputs:
+                    model_name = inputs["lora_name"]
+                elif class_type == "ModelLoader" and "model_name" in inputs:
+                    model_name = inputs["model_name"]
+                else:
+                    continue
+
+                # if it is a link then ignore
+                if type(model_name) is list:
+                    continue
+
+                # Check if the model is available
+                if model_name not in models:
+                    # Try to find an alternative AI model
+                    alternative_model = self._find_alternative_model(
+                        model_name, models, node_data
+                    )
+                    if alternative_model:
+                        print(f"alt model for {model_name} is {alternative_model}")
+                        # Update the node_data to use the alternative model
+                        if class_type == "UnetLoaderGGUF" and "unet_name" in inputs:
+                            node_data["inputs"]["unet_name"] = alternative_model
+                        elif class_type == "UNETLoader" and "unet_name" in inputs:
+                            node_data["inputs"]["unet_name"] = alternative_model
+                        elif class_type == "VAELoader" and "vae_name" in inputs:
+                            node_data["inputs"]["vae_name"] = alternative_model
+                        elif class_type == "CLIPLoaderGGUF" and "clip_name" in inputs:
+                            node_data["inputs"]["clip_name"] = alternative_model
+                        elif (
+                            class_type == "CheckpointLoaderSimple"
+                            and "ckpt_name" in inputs
+                        ):
+                            node_data["inputs"]["ckpt_name"] = alternative_model
+                        elif class_type == "LoraLoader" and "lora_name" in inputs:
+                            node_data["inputs"]["lora_name"] = alternative_model
+                        elif class_type == "ModelLoader" and "model_name" in inputs:
+                            node_data["inputs"]["model_name"] = alternative_model
+                        # Don't add to missing_models since we found an alternative
+                    else:
+                        missing_models.append(model_name)
+
+        return missing_models

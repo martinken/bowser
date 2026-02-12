@@ -1,16 +1,12 @@
 import json
 import uuid
 from urllib.parse import urlencode
-from xmlrpc import client
 
 import urllib3
 from PySide6.QtWebSockets import QWebSocket
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QMessageBox
 from urllib3 import encode_multipart_formdata
-
-
-
 
 class comfyServer(QWebSocket):
     def __init__(self, server_address="127.0.0.1:8188"):
@@ -74,7 +70,7 @@ class comfyServer(QWebSocket):
         self.close()
 
     def queue_prompt(self, job):
-        p = {"prompt": job.get_workflow(self), "client_id": self._client_id}
+        p = {"prompt": job.get_workflow_for_submission(self), "client_id": self._client_id}
         headers = {"Content-Type": "application/json"}
         data = json.dumps(p).encode("utf-8")
         req = urllib3.PoolManager().request(
@@ -85,13 +81,13 @@ class comfyServer(QWebSocket):
         )
         return json.loads(req.data)
 
-    def get_system_stats(self, prompt_id):
+    def get_system_stats(self): 
         if self.is_connected():
             req = urllib3.PoolManager().request(
                 "GET", "http://{}/system_stats".format(self._server_address)
             )
             return json.loads(req.data)
-        return "not connected yet"
+        return {"Error:": "not connected yet"}
     
     def cancel_prompt(self, prompt_id):
         p = {"prompt_id": prompt_id, "client_id": self._client_id}

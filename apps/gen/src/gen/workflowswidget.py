@@ -35,7 +35,6 @@ from PySide6.QtWidgets import (
 
 from .comfyserver import comfyServer
 
-
 class WorkflowsTreeWidgetItem(QTreeWidgetItem):
     """
     Custom QTreeWidgetItem subclass for workflows that adds full_path and is_populated members.
@@ -213,6 +212,7 @@ class NodeWidget(QWidget):
             text_edit.setSizePolicy(
                 QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
             )
+            text_edit.setFixedHeight(87)  # Start with a fixed height, 4 lines
 
             # Connect text changes to update self._value
             text_edit.textChanged.connect(
@@ -805,25 +805,6 @@ class WorkflowsWidget(QWidget):
         try:
             with open(file_path, "r", encoding="utf-8") as f:
                 workflow = json.load(f)
-
-                # Check the workflow to make sure the models are all available
-                missing_models = self._check_workflow_models(workflow)
-
-                if missing_models:
-                    missing_models_str = ", ".join(missing_models)
-                    print(
-                        f"Error: The following models are not available on the ComfyUI server: {missing_models_str}"
-                    )
-                    # Show a user-friendly error dialog
-                    QMessageBox.critical(
-                        self,
-                        "Missing Models",
-                        f"The following models are not available on the ComfyUI server:\n\n{missing_models_str}\n\n"
-                        "Please ensure these models are installed in your ComfyUI models directory.",
-                        QMessageBox.StandardButton.Ok,
-                    )
-                    return workflow
-
                 return workflow
 
         except Exception as e:
@@ -1042,20 +1023,26 @@ class WorkflowsWidget(QWidget):
         Args:
             job: A Job object containing workflow_name and _workflow data
         """
-        # Load the workflow by name from the job
-        if hasattr(job, "workflow_name"):
-            self._load_workflow_by_name(job.workflow_name)
+        if type(job) is not dict:
+            # Load the workflow by name from the job
+            if hasattr(job, "workflow_name"):
+                self._load_workflow_by_name(job.workflow_name)
+            workflow = getattr(job, "workflow", None)
+        else:
+            if "workflow_name" in job:
+                self._load_workflow_by_name(job["workflow_name"])
+            workflow = job.get("workflow", None)
 
         # Import settings from the job's workflow data
-        if hasattr(job, "_workflow") and hasattr(self, "_node_widgets"):
+        if workflow and hasattr(self, "_node_widgets"):
             # Update each node widget with values from the job's workflow
             for node_widget in self._node_widgets:
                 if not hasattr(node_widget, "id"):
                     continue
 
                 node_id = node_widget.id
-                if node_id in job._workflow:
-                    node_data = job._workflow[node_id]
+                if node_id in workflow:
+                    node_data = workflow[node_id]
 
                     # Get the value from the workflow
                     if node_data["class_type"] == "SwarmInputImage":
@@ -1261,18 +1248,18 @@ class WorkflowsWidget(QWidget):
 
     def dragEnterEvent(self, event):
         """Handle drag enter event for the settings tab."""
-        # Check if we have URLs (files being dragged)
-        if event.mimeData().hasUrls():
+        # Check if we have URLs (files being dragged) or job widget data
+        if event.mimeData().hasUrls() or event.mimeData().hasFormat("application/x-job-widget"):
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dropEvent(self, event):
         """Handle drop event for the settings tab."""
-        # Check if we have URLs and if we're on the settings tab
-        if event.mimeData().hasUrls():
+        # Check if we have URLs (files) or job widget data
+        if event.mimeData().hasUrls() or event.mimeData().hasFormat("application/x-job-widget"):
             event.acceptProposedAction()
-            # Handle the dropped files
+            # Handle the dropped data
             self.handle_drop_data(event.mimeData())
         else:
             event.ignore()
@@ -1283,7 +1270,14 @@ class WorkflowsWidget(QWidget):
         Args:
             mime_data: QMimeData containing the dropped data
         """
-        if mime_data.hasUrls():
+        # Check if this is a job widget being dropped
+        if mime_data.hasFormat("application/x-job-widget"):
+            # Get the job data from the MIME data
+            job_data = json.loads(bytes(mime_data.data("application/x-job-widget")).decode('utf-8'))
+            self.load_workflow_and_settings_from_job(job_data)
+            
+        # Check if this is a file being dropped
+        elif mime_data.hasUrls():
             urls = mime_data.urls()
             if urls:
                 # Get the first URL
@@ -1314,191 +1308,6 @@ class WorkflowsWidget(QWidget):
         # print(workflow)
         # Emit the job_queued signal with the workflow data and count
         self.job_queued.emit(self._workflow_data_filename, workflow, count)
-
-    def _find_alternative_model(self, model_name, available_models, node_data):
-        """Find an alternative model when the requested model is not available.
-
-        This method tries to find alternative models by:
-        1. For GGUF models: trying different quantizations (Q8 -> Q6 -> Q4, etc.)
-        2. For FP16 models: trying other precision (FP16 -> FP8)
-        3. For other models: looking for similar names
-
-        Args:
-            model_name: The name of the model to find an alternative for
-            available_models: List of available model names
-            node_data: The node data dictionary
-
-        Returns:
-            str: The alternative model name if found, None otherwise
-        """
-        # Check if it's a GGUF model
-        if model_name.endswith(".gguf"):
-            # Try different quantizations
-            quantization_levels = [
-                "Q8_0",
-                "Q6_K",
-                "Q5_K_M",
-                "Q5_K_S",
-                "Q5_1",
-                "Q5_0",
-                "Q4_K_M",
-                "Q4_K_S",
-            ]
-            base_name = model_name.replace(".gguf", "")
-
-            # Extract the current quantization if present
-            current_quant = None
-            for quant in quantization_levels:
-                if quant in base_name:
-                    current_quant = quant
-                    break
-
-            # If we found a quantization, try others
-            if current_quant:
-                for quant in quantization_levels:
-                    if quant == current_quant:
-                        continue
-                    # Try to replace the quantization
-                    alternative = (
-                        base_name.replace(current_quant, quant) + ".gguf"
-                    )
-                    if alternative in available_models:
-                        return alternative
-
-            # If no quantization found or none worked, try common patterns
-            for quant in quantization_levels:
-                # Try adding quantization suffix
-                alternative = f"{base_name}_{quant}.gguf"
-                if alternative in available_models:
-                    return alternative
-
-                # Try uppercase quantization suffix
-                alternative = f"{base_name}_{quant.upper()}.gguf"
-                if alternative in available_models:
-                    return alternative
-
-        # Check if it's an FP16 model
-        elif "fp16" in model_name.lower():
-            base_name = model_name.replace(".fp16", "").replace("fp16", "")
-
-            # Try FP8 version
-            alternative = f"{base_name}.fp8"
-            if alternative in available_models:
-                return alternative
-
-            # Try lowercase fp8
-            alternative = f"{base_name}.fp8"
-            if alternative in available_models:
-                return alternative
-
-        # Check if it's a safetensors model
-        elif model_name.endswith(".safetensors"):
-            base_name = model_name.replace(".safetensors", "")
-
-            # Try .ckpt version
-            alternative = f"{base_name}.ckpt"
-            if alternative in available_models:
-                return alternative
-
-        # Try to find any model with similar name (fallback)
-        base_name = model_name.split("_")[0]  # Get base name before any suffix
-        for available_model in available_models:
-            if base_name.lower() in available_model.lower():
-                return available_model
-
-        return None
-
-    def _check_workflow_models(self, workflow):
-        """Check if all models required by the workflow are available on the ComfyUI server.
-
-        Args:
-            workflow: The workflow dictionary
-
-        Returns:
-            list: List of missing model names, empty if all models are available
-        """
-        if not self._comfy_server or not self._comfy_server.is_connected():
-            print(
-                "Warning: ComfyUI server not connected, cannot check model availability"
-            )
-            return []
-
-        models = self._comfy_server.get_all_models_available()
-
-        # List of node classes that load models
-        model_loader_classes = [
-            "UnetLoaderGGUF",
-            "VAELoader",
-            "CLIPLoaderGGUF",
-            "CheckpointLoaderSimple",
-            "LoraLoader",
-            "ModelLoader",
-            "UNETLoader",
-        ]
-
-        missing_models = []
-
-        # Check each node in the workflow
-        for node_id, node_data in workflow.items():
-            class_type = node_data.get("class_type", "")
-
-            # Check if this node loads a model
-            if class_type in model_loader_classes:
-                inputs = node_data.get("inputs", {})
-
-                # Get the model name from the appropriate input field
-                if class_type == "UnetLoaderGGUF" and "unet_name" in inputs:
-                    model_name = inputs["unet_name"]
-                elif class_type == "UNETLoader" and "unet_name" in inputs:
-                    model_name = inputs["unet_name"]
-                elif class_type == "VAELoader" and "vae_name" in inputs:
-                    model_name = inputs["vae_name"]
-                elif class_type == "CLIPLoaderGGUF" and "clip_name" in inputs:
-                    model_name = inputs["clip_name"]
-                elif class_type == "CheckpointLoaderSimple" and "ckpt_name" in inputs:
-                    model_name = inputs["ckpt_name"]
-                elif class_type == "LoraLoader" and "lora_name" in inputs:
-                    model_name = inputs["lora_name"]
-                elif class_type == "ModelLoader" and "model_name" in inputs:
-                    model_name = inputs["model_name"]
-                else:
-                    continue
-
-                # if it is a link then ignore
-                if type(model_name) is list:
-                    continue
-
-                # Check if the model is available
-                if model_name not in models:
-                    # Try to find an alternative AI model
-                    alternative_model = self._find_alternative_model(
-                        model_name, models, node_data
-                    )
-                    if alternative_model:
-                        print(f"alt model for {model_name} is {alternative_model}")
-                        # Update the node_data to use the alternative model
-                        if class_type == "UnetLoaderGGUF" and "unet_name" in inputs:
-                            node_data["inputs"]["unet_name"] = alternative_model
-                        elif class_type == "UNETLoader" and "unet_name" in inputs:
-                            node_data["inputs"]["unet_name"] = alternative_model
-                        elif class_type == "VAELoader" and "vae_name" in inputs:
-                            node_data["inputs"]["vae_name"] = alternative_model
-                        elif class_type == "CLIPLoaderGGUF" and "clip_name" in inputs:
-                            node_data["inputs"]["clip_name"] = alternative_model
-                        elif (
-                            class_type == "CheckpointLoaderSimple"
-                            and "ckpt_name" in inputs
-                        ):
-                            node_data["inputs"]["ckpt_name"] = alternative_model
-                        elif class_type == "LoraLoader" and "lora_name" in inputs:
-                            node_data["inputs"]["lora_name"] = alternative_model
-                        elif class_type == "ModelLoader" and "model_name" in inputs:
-                            node_data["inputs"]["model_name"] = alternative_model
-                        # Don't add to missing_models since we found an alternative
-                    else:
-                        missing_models.append(model_name)
-
-        return missing_models
 
     def _update_workflow_with_gui_values(self):
         workflow = copy.deepcopy(self._workflow_data)

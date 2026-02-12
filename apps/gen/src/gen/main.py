@@ -18,7 +18,7 @@ def main() -> int:
         "--server",
         type=str,
         default=None,
-        help="ComfyUI server address",
+        help="ComfyUI server address(es), comma-separated for multiple servers",
     )
     args = arg_parser.parse_args()
 

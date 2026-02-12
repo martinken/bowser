@@ -95,17 +95,16 @@ class DirectoryTree(QTreeView):
         # Clean up the proxy model first
         if hasattr(self, '_proxy') and self._proxy is not None:
             try:
-                # Disconnect the proxy from the source model
-                if hasattr(self._proxy, 'setSourceModel'):
-                    self._proxy.setSourceModel(None)
+                # Schedule the proxy model for deletion
+                self._proxy.deleteLater()
             except Exception as e:
                 print(f"Error cleaning up proxy model: {e}")
 
         # Clean up the file system model
         if hasattr(self, '_file_system_model') and self._file_system_model is not None:
             try:
-                # Clear the model to release resources
-                self._file_system_model.clear()
+                # Reset the model root path to release resources
+                self._file_system_model.setRootPath("")
             except Exception as e:
                 print(f"Error cleaning up file system model: {e}")
 
@@ -119,6 +118,38 @@ class DirectoryTree(QTreeView):
 
     def get_root_folder(self):
         return self._root_folder
+
+    def select_folder(self, folder_path: str) -> None:
+        """Select a folder based on its path.
+
+        This method finds and selects a folder in the tree view based on the provided
+        path. It expands all parent directories and scrolls to make the folder visible.
+
+        Args:
+            folder_path (str): Path to the folder to select.
+        """
+        # Check if the path is a valid directory
+        if not os.path.isdir(folder_path):
+            return
+
+        # Get the index for the folder
+        folder_index = self._file_system_model.index(folder_path)
+
+        if folder_index.isValid():
+            # Map to proxy model
+            proxy_folder_index = self._proxy.mapFromSource(folder_index)
+            
+            # Expand all directories in the path
+            self._expand_all_directories(proxy_folder_index)
+            
+            # Select the folder
+            self.setCurrentIndex(proxy_folder_index)
+            
+            # Scroll to make it visible
+            self.scrollTo(proxy_folder_index)
+            
+            # Fire the clicked signal
+            self.clicked.emit(proxy_folder_index)
 
     def open_root_folder(self, folder_path: str) -> None:
         """Open a folder from a given path.
