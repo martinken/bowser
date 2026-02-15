@@ -6,6 +6,7 @@ Contains a QTabWidget with Workflows and Settings tabs.
 import copy
 import json
 import os
+import re
 from typing import Optional
 
 from core.metadatahandler import MetadataHandler
@@ -14,8 +15,12 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMessageBox,
     QPushButton,
     QSizePolicy,
     QTabWidget,
@@ -55,6 +60,9 @@ class WorkflowsWidget(QWidget):
     # Signal emitted when a job is queued
     job_queued = Signal(str, dict, int)
 
+
+    PRESETS_FILENAME = "presets.json"
+
     def __init__(self):
         super().__init__()
         self.setMinimumWidth(250)
@@ -77,6 +85,11 @@ class WorkflowsWidget(QWidget):
         # Add tabs
         self.tab_widget.addTab(self.workflows_tab, "Workflows")
         self.tab_widget.addTab(self.settings_tab, "Settings")
+
+        # Load presets and create Presets tab
+        self._presets: dict = {}
+        self._load_presets_from_file()
+        self._initialize_presets_tab()
 
         # Add tab widget to layout
         layout.addWidget(self.tab_widget)
@@ -533,7 +546,13 @@ class WorkflowsWidget(QWidget):
             int(self._queue_count.text())
         )
 
+        # Create a Save Preset button
+        save_button = QPushButton("Save")
+        save_button.setStyleSheet("font-size: 14px;")
+        save_button.clicked.connect(self._save_preset)
+
         # Add widgets to horizontal layout
+        hlayout.addWidget(save_button)
         hlayout.addWidget(queue_button)
         hlayout.addWidget(self._queue_count)
 
@@ -713,6 +732,148 @@ class WorkflowsWidget(QWidget):
         else:
             # If tree doesn't exist yet, initialize it
             self._initialize_workflows_tree()
+
+    # ── Presets ─────────────────────────────────────────────────────────
+
+    def _get_presets_path(self) -> str:
+        """Return the absolute path to the presets.json file.
+
+        The file lives next to the workflows directory so that it persists
+        across sessions.
+        """
+        workflows_dir = getattr(self, "workflows_directory", "workflows")
+        return os.path.join(os.path.dirname(workflows_dir) if os.path.dirname(workflows_dir) else ".", self.PRESETS_FILENAME)
+
+    def _load_presets_from_file(self):
+        """Load presets from the presets.json file into ``_presets``."""
+        path = self._get_presets_path()
+        if os.path.isfile(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    self._presets = data
+            except Exception as e:
+                print(f"Error loading presets from {path}: {e}")
+
+    def _save_presets_to_file(self):
+        """Persist the current ``_presets`` dictionary to presets.json."""
+        path = self._get_presets_path()
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(self._presets, f, indent=2)
+        except Exception as e:
+            print(f"Error saving presets to {path}: {e}")
+
+    @staticmethod
+    def _sanitize_preset_name(name: str) -> str:
+        """Strip leading/trailing whitespace and collapse internal whitespace."""
+        return re.sub(r"\s+", " ", name.strip())
+
+    def _save_preset(self):
+        """Prompt the user for a name and save the current workflow + settings as a preset."""
+        if not hasattr(self, "_workflow_data") or not hasattr(self, "_workflow_data_filename"):
+            QMessageBox.warning(self, "No Workflow", "Please load a workflow before saving a preset.")
+            return
+
+        name, ok = QInputDialog.getText(self, "Save Preset", "Preset name:")
+        if not ok or not name:
+            return
+
+        name = self._sanitize_preset_name(name)
+        if not name:
+            QMessageBox.warning(self, "Invalid Name", "Preset name cannot be empty or only whitespace.")
+            return
+
+        # Warn on duplicate
+        if name in self._presets:
+            reply = QMessageBox.question(
+                self,
+                "Overwrite Preset",
+                f"A preset named '{name}' already exists. Overwrite it?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        # Build the preset data (workflow_name + full workflow with GUI values)
+        workflow = self._update_workflow_with_gui_values()
+        self._presets[name] = {
+            "workflow_name": self._workflow_data_filename,
+            "workflow": workflow,
+        }
+
+        self._save_presets_to_file()
+        self._refresh_presets_list()
+
+    def _initialize_presets_tab(self):
+        """Create the Presets tab with a list widget and delete button."""
+        self.presets_tab = QWidget()
+        presets_layout = QVBoxLayout(self.presets_tab)
+        presets_layout.setContentsMargins(4, 4, 4, 4)
+        presets_layout.setSpacing(4)
+
+        self._presets_list = QListWidget()
+        font = QFont()
+        font.setPointSize(12)
+        self._presets_list.setFont(font)
+        # Double-click to load, single-click just selects for deletion
+        self._presets_list.itemDoubleClicked.connect(self._on_preset_clicked)
+        presets_layout.addWidget(self._presets_list)
+
+        buttons_layout = QHBoxLayout()
+        load_button = QPushButton("Load")
+        load_button.clicked.connect(self._load_selected_preset)
+        buttons_layout.addWidget(load_button)
+
+        delete_button = QPushButton("Delete")
+        delete_button.clicked.connect(self._delete_selected_preset)
+        buttons_layout.addWidget(delete_button)
+        presets_layout.addLayout(buttons_layout)
+
+        self.tab_widget.addTab(self.presets_tab, "Presets")
+        self._refresh_presets_list()
+
+    def _refresh_presets_list(self):
+        """Rebuild the presets list widget from ``_presets``."""
+        self._presets_list.clear()
+        for name in sorted(self._presets.keys()):
+            item = QListWidgetItem(name)
+            self._presets_list.addItem(item)
+
+    def _on_preset_clicked(self, item: QListWidgetItem):
+        """Load a preset when it is double-clicked in the presets list."""
+        name = item.text()
+        preset = self._presets.get(name)
+        if preset is None:
+            return
+        self.load_workflow_and_settings_from_job(preset)
+
+    def _load_selected_preset(self):
+        """Load the currently selected preset via the Load button."""
+        current = self._presets_list.currentItem()
+        if current is not None:
+            self._on_preset_clicked(current)
+
+    def _delete_selected_preset(self):
+        """Delete the currently selected preset."""
+        current = self._presets_list.currentItem()
+        if current is None:
+            return
+        name = current.text()
+        reply = QMessageBox.question(
+            self,
+            "Delete Preset",
+            f"Delete preset '{name}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self._presets.pop(name, None)
+        self._save_presets_to_file()
+        self._refresh_presets_list()
 
     def _queue_job(self, count):
         workflow = self._update_workflow_with_gui_values()
