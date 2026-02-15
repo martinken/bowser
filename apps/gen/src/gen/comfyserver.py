@@ -233,3 +233,15 @@ class comfyServer(QWebSocket):
         except Exception as e:
             print(f"Error checking model availability: {e}")
             return False
+
+    def get_loras_available(self):
+        results = []
+        try:
+            req = urllib3.PoolManager().request(
+                "GET",
+                "http://{}/models/loras".format(self._server_address),
+            )
+            return json.loads(req.data)
+        except Exception as e:
+            print(f"Error checking model availability: {e}")
+            return False

@@ -29,6 +29,51 @@ DEFAULT_VOLUME: int = 100
 MAX_PROCESSES: int = 8
 PROCESSING_CHUNK_SIZE: int = 24
 
+def numpy_to_qimage(image_array):
+    """
+    Converts a 2D or 3D numpy array to a QImage.
+    Assumes uint8 data type and 'C' memory order.
+    """
+    height, width = image_array.shape[:2]
+
+    if len(image_array.shape) == 2:
+        # Grayscale image
+        bytes_per_line = width
+        # Ensure array is contiguous in memory
+        image_array = np.require(image_array, np.uint8, "C")
+        q_image_format = QImage.Format.Format_Grayscale8
+
+        q_image = QImage(
+            image_array.data, width, height, bytes_per_line, q_image_format
+        )
+
+    elif len(image_array.shape) == 3 and image_array.shape[2] == 3:
+        # RGB image
+        bytes_per_line = 3 * width
+        # OpenCV reads in BGR, so swap to RGB
+        # If your array is already RGB, skip the swap
+        image_array = cv2.cvtColor(image_array, cv2.COLOR_BGR2RGB)
+        image_array = np.require(image_array, np.uint8, "C")
+        q_image_format = QImage.Format.Format_RGB888
+        q_image = QImage(
+            image_array.data, width, height, bytes_per_line, q_image_format
+        )
+
+    elif len(image_array.shape) == 3 and image_array.shape[2] == 4:
+        # RGBA image
+        bytes_per_line = 4 * width
+        image_array = np.require(image_array, np.uint8, "C")
+        q_image_format = QImage.Format.Format_RGBA8888
+        q_image = QImage(
+            image_array.data, width, height, bytes_per_line, q_image_format
+        )
+
+    else:
+        raise ValueError("Unsupported NumPy array shape or number of channels")
+
+    return q_image
+
+
 
 # extract GPU number from COmfyUI device string
 def get_gpu_from_device_string(device: str) -> str:

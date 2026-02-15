@@ -8,25 +8,17 @@ import json
 import os
 from typing import Optional
 
-import cv2
-import numpy as np
 from core.metadatahandler import MetadataHandler
-from core.utils import check_int, get_swarm_preview_path, is_video_file
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont, QImage, QPixmap, QTextOption
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QComboBox,
-    QFileDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPushButton,
     QSizePolicy,
-    QSlider,
     QTabWidget,
-    QTextEdit,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -34,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from .comfyserver import comfyServer
+from .workflownodewidget import WorkflowNodeWidget
 
 class WorkflowsTreeWidgetItem(QTreeWidgetItem):
     """
@@ -48,457 +41,6 @@ class WorkflowsTreeWidgetItem(QTreeWidgetItem):
         # Initialize custom attributes
         self.full_path: Optional[str] = None
         self.is_populated: bool = False
-
-
-def numpy_to_qimage(image_array):
-    """
-    Converts a 2D or 3D numpy array to a QImage.
-    Assumes uint8 data type and 'C' memory order.
-    """
-    height, width = image_array.shape[:2]
-
-    if len(image_array.shape) == 2:
-        # Grayscale image
-        bytes_per_line = width
-        # Ensure array is contiguous in memory
-        image_array = np.require(image_array, np.uint8, "C")
-        q_image_format = QImage.Format.Format_Grayscale8
-
-        q_image = QImage(
-            image_array.data, width, height, bytes_per_line, q_image_format
-        )
-
-    elif len(image_array.shape) == 3 and image_array.shape[2] == 3:
-        # RGB image
-        bytes_per_line = 3 * width
-        # OpenCV reads in BGR, so swap to RGB
-        # If your array is already RGB, skip the swap
-        image_array = cv2.cvtColor(image_array, cv2.COLOR_BGR2RGB)
-        image_array = np.require(image_array, np.uint8, "C")
-        q_image_format = QImage.Format.Format_RGB888
-        q_image = QImage(
-            image_array.data, width, height, bytes_per_line, q_image_format
-        )
-
-    elif len(image_array.shape) == 3 and image_array.shape[2] == 4:
-        # RGBA image
-        bytes_per_line = 4 * width
-        image_array = np.require(image_array, np.uint8, "C")
-        q_image_format = QImage.Format.Format_RGBA8888
-        q_image = QImage(
-            image_array.data, width, height, bytes_per_line, q_image_format
-        )
-
-    else:
-        raise ValueError("Unsupported NumPy array shape or number of channels")
-
-    return q_image
-
-
-class NodeWidget(QWidget):
-    """
-    Widget representing a single GUI node.
-
-    This is a placeholder class that can be extended to create
-    specific widgets for different node types.
-    """
-
-    def __init__(self, id, node_data):
-        super().__init__()
-        self.node_data = node_data
-        self.id = id
-        self._type = None
-        self.input_width = 0
-        self.input_height = 0
-
-        if "inputs" not in node_data or "title" not in node_data["inputs"]:
-            return
-
-        inputs = node_data["inputs"]
-        self._value = inputs["value"]
-        self.setAcceptDrops(False)
-
-        # Traverse settings_list to build the widget
-        # Create a label with the title value
-        title_label = QLabel(str(inputs["title"]))
-        title_label.setStyleSheet("font-size: 14px;")
-        if "view_type" in inputs and inputs["view_type"] == "slider":
-            self._type = "slider"
-            layout = QVBoxLayout()
-            layout.setContentsMargins(0, 0, 0, 0)
-            hlayout = QHBoxLayout()
-            hlayout.setContentsMargins(0, 0, 0, 0)
-            hlayout.addWidget(title_label)
-            # Create a slider widget
-            # Get slider parameters
-            min_val = float(inputs["min"]) if "min" in inputs else 0
-            max_val = float(inputs["view_max"]) if "view_max" in inputs else 100
-            step = float(inputs["step"]) if "step" in inputs else 1
-            current_val = float(inputs["value"]) if "value" in inputs else min_val
-
-            num_steps = round((max_val - min_val) / step)
-            # Create the slider
-            slider = QSlider(Qt.Orientation.Horizontal)
-            slider.setMinimum(0)
-            slider.setMaximum(num_steps)
-            slider.setValue(int((current_val - min_val) / step))
-            slider.setSingleStep(1)
-            slider.setPageStep(10)
-
-            # Create a label to display the current value
-            value_label = QLabel(str(current_val))
-            value_label.setStyleSheet("font-size: 14px;")
-            self._set_slider_value(slider.value(), min_val, step, value_label)
-
-            # Connect slider value changes to update the label and self._value
-            slider.valueChanged.connect(
-                lambda idx: self._set_slider_value(idx, min_val, step, value_label)
-            )
-
-            # Add widgets to layout
-            hlayout.addWidget(value_label)
-            layout.addLayout(hlayout)
-            layout.addWidget(slider)
-            self.setLayout(layout)
-
-        if "view_type" in inputs and inputs["view_type"] == "seed":
-            # Create a simple layout with node information
-            self._type = "seed"
-            layout = QHBoxLayout()
-            layout.setContentsMargins(0, 0, 0, 0)
-            layout.addWidget(title_label)
-
-            # Add an int input text box to the right of the title_label
-            from PySide6.QtWidgets import QLineEdit
-
-            # Get the current value
-            current_val = int(inputs["value"]) if "value" in inputs else 0
-
-            # Create a line edit for integer input
-            int_input = QLineEdit(str(current_val))
-            int_input.setFixedWidth(180)
-            int_input.setAlignment(Qt.AlignmentFlag.AlignRight)
-            int_input.setStyleSheet("font-size: 14px;")
-
-            # Connect text changes to update self._value
-            int_input.textChanged.connect(lambda text: self._set_int_value(text))
-
-            # Add widgets to layout
-            layout.addWidget(int_input)
-
-            # Add a reset button to the right of the int_input
-            reset_button = QPushButton("↻")
-            reset_button.setFixedSize(27, 27)
-            reset_button.setStyleSheet("font-size: 21px; padding: 0;")
-            reset_button.clicked.connect(lambda: self._reset_seed_value(int_input))
-            layout.addWidget(reset_button)
-
-            self.setLayout(layout)
-
-        if node_data["class_type"] == "SwarmInputText":
-            # Add a multi-line text box under the title_label that grows as needed
-            self._type = inputs["view_type"]
-            layout = QVBoxLayout()
-            layout.setContentsMargins(0, 0, 0, 0)
-            layout.addWidget(title_label)
-
-            # Get the current value
-            current_val = inputs["value"] if "value" in inputs else ""
-
-            # Create a text edit with word wrap
-            text_edit = QTextEdit(str(current_val))
-            text_edit.setStyleSheet("font-size: 14px;")
-            text_edit.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
-            text_edit.setSizePolicy(
-                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
-            )
-            text_edit.setFixedHeight(87)  # Start with a fixed height, 4 lines
-
-            # Connect text changes to update self._value
-            text_edit.textChanged.connect(
-                lambda widget=self: setattr(widget, "_value", text_edit.toPlainText())
-            )
-
-            # Add widget to layout
-            layout.addWidget(text_edit)
-            self.setLayout(layout)
-
-        if node_data["class_type"] == "SwarmInputDropdown":
-            # Create a dropdown menu selection
-            self._type = "dropdown"
-            layout = QHBoxLayout()
-            layout.setContentsMargins(0, 0, 0, 0)
-
-            # Create a label with the title value
-            title_label = QLabel(str(inputs["title"]))
-            title_label.setStyleSheet("font-size: 14px;")
-            layout.addWidget(title_label)
-
-            # Create a combo box
-            combo_box = QComboBox()
-            combo_box.setStyleSheet("font-size: 14px;")
-
-            # Populate with options from node_data
-            if "options" in node_data and node_data["options"]:
-                for option in node_data["options"]:
-                    combo_box.addItem(str(option))
-
-            # Set current value if it exists
-            if "value" in inputs:
-                current_value = str(inputs["value"])
-                index = combo_box.findText(current_value)
-                if index >= 0:
-                    combo_box.setCurrentIndex(index)
-                else:
-                    self._value = node_data["options"][0]
-
-            # Connect selection changes to update self._value
-            combo_box.currentTextChanged.connect(
-                lambda text, widget=self: setattr(widget, "_value", text)
-            )
-
-            # Add combo box to layout
-            layout.addWidget(combo_box)
-            self.setLayout(layout)
-
-        if (
-            node_data["class_type"] == "SwarmInputImage"
-            or node_data["class_type"] == "SwarmInputVideo"
-        ):
-            # Create a horizontal layout with title, button, filename on left and thumbnail on right
-            layout = QHBoxLayout()
-            layout.setContentsMargins(0, 0, 0, 0)
-            layout.setSpacing(10)
-
-            # Set dark grey background for this widget
-            # self.setStyleSheet("background-color: #333333;")
-            # self.setStyleSheet("border: 1px solid #bbb;")
-
-            # Left side - vertical layout for title, button, filename, and dimensions
-            left_layout = QVBoxLayout()
-            left_layout.setContentsMargins(0, 0, 0, 0)
-            left_layout.setSpacing(5)
-
-            # Create a label with the title value
-            title_label = QLabel(str(inputs["title"]))
-            title_label.setStyleSheet("font-size: 14px;")
-            left_layout.addWidget(title_label)
-
-            # Create a "Choose File" button
-            choose_file_button = QPushButton("Choose File")
-            choose_file_button.setStyleSheet("font-size: 14px;")
-            left_layout.addWidget(choose_file_button)
-
-            # Create a label to display the filename
-            self._filename_label = QLabel("")
-            self._filename_label.setStyleSheet("font-size: 12px; color: gray;")
-            left_layout.addWidget(self._filename_label)
-
-            # Create a label to display image dimensions
-            self._dimensions_label = QLabel("")
-            self._dimensions_label.setStyleSheet("font-size: 12px; color: gray;")
-            left_layout.addWidget(self._dimensions_label)
-
-            # Right side - thumbnail
-            self._thumbnail_label = QLabel()
-            self._thumbnail_label.setFixedSize(128, 128)
-            self._thumbnail_label.setStyleSheet(
-                "border: 1px solid #000; color: red; font-size: 10px;"
-            )
-
-            # Add left and right to main layout
-            layout.addLayout(left_layout)
-            layout.addWidget(self._thumbnail_label)
-            layout.setStretch(0, 0)  # Don't stretch left side
-            layout.setStretch(1, 1)  # Let thumbnail take remaining space
-
-            # Set initial value if it exists
-            if "image" in inputs and len(inputs["image"]):
-                self._type = "image"
-                self._value = inputs["image"]
-                # Try to load and display the thumbnail
-                self._load_thumbnail(inputs["image"])
-                choose_file_button.clicked.connect(lambda: self._choose_image_file())
-
-            if "video" in inputs and len(inputs["video"]):
-                self._type = "video"
-                self._value = inputs["video"]
-                # Try to load and display the thumbnail
-                self._load_thumbnail(inputs["video"])
-                choose_file_button.clicked.connect(lambda: self._choose_video_file())
-
-            self.setLayout(layout)
-
-            # Enable drag and drop for this widget
-            self.setAcceptDrops(True)
-
-    def _set_int_value(self, text):
-        if text is not None and len(text) > 0 and check_int(text):
-            self._value = int(text)
-
-    def _reset_seed_value(self, line_edit):
-        """Reset the seed value to -1."""
-        line_edit.setText("-1")
-        self._value = -1
-
-    def _set_slider_value(self, idx, min_val, step, label):
-        val = min_val + idx * step
-        if self.node_data["class_type"] == "SwarmInputInteger":
-            label.setText(str(int(val)))
-            self._value = val
-        else:
-            label.setText(str(round(val, 8)))
-            self._value = round(val, 8)
-
-    def _choose_video_file(self):
-        """Open a file dialog to select an video file."""
-        # Open file dialog to select an video file
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select Video File",
-            "",
-            "Video Files (*.mov *.mp4)",
-        )
-
-        if file_path:
-            # Set the value to the file path
-            self._value = file_path
-            # Update the filename label
-            self._filename_label.setText(os.path.basename(file_path))
-            # Load and display the thumbnail
-            self._load_thumbnail(file_path)
-
-    def _choose_image_file(self):
-        """Open a file dialog to select an image file."""
-        # Open file dialog to select an image file
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select Image File",
-            "",
-            "Image Files (*.png *.jpg *.jpeg *.bmp *.webp)",
-        )
-
-        if file_path:
-            # Set the value to the file path
-            self._value = file_path
-            # Update the filename label
-            self._filename_label.setText(os.path.basename(file_path))
-            # Load and display the thumbnail
-            self._load_thumbnail(file_path)
-
-    def _load_thumbnail(self, file_path):
-        """Load and display a thumbnail of the image."""
-        if len(file_path) <= 0 or not os.path.exists(file_path):
-            return
-
-        image = None
-        try:
-            # Load the image
-            if is_video_file(file_path):
-                preview_path = get_swarm_preview_path(file_path)
-                if len(preview_path) > 0 and os.path.exists(preview_path):
-                    image = QImage(preview_path)
-                    if image.isNull():
-                        raise ValueError("Could not load image")
-                else:
-                    # Use cv2 to grab first frame from the video
-                    # Open the video file
-                    cap = cv2.VideoCapture(file_path)
-                    if cap.isOpened():
-                        # Read the first frame
-                        ret, frame = cap.read()
-                        cap.release()
-                        if ret and frame is not None:
-                            image = numpy_to_qimage(frame)
-            else:
-                image = QImage(file_path)
-                if image.isNull():
-                    raise ValueError("Could not load image")
-
-            if image is None:
-                return
-
-            # Get image dimensions
-            self.input_width = image.width()
-            self.input_height = image.height()
-
-            # Update dimensions label
-            if hasattr(self, "_dimensions_label"):
-                self._dimensions_label.setText(
-                    f"{self.input_width} × {self.input_height} px"
-                )
-
-            # Scale to 128x128 while maintaining aspect ratio
-            pixmap = QPixmap.fromImage(image).scaled(
-                128,
-                128,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-
-            # Display the thumbnail
-            self._thumbnail_label.setPixmap(pixmap)
-
-        except Exception as e:
-            print(f"Error loading thumbnail: {e}")
-            # Show error message in the thumbnail area
-            self._thumbnail_label.setText("Invalid Image")
-            # Clear dimensions if error occurs
-            if hasattr(self, "_dimensions_label"):
-                self._dimensions_label.setText("")
-
-    def get_value(self):
-        if self._type is None:
-            return
-        return self._value
-
-    def dragEnterEvent(self, event):
-        """Handle drag enter event."""
-        if self._type == "image" or self._type == "video":
-            if event.mimeData().hasUrls():
-                event.acceptProposedAction()
-        else:
-            event.ignore()
-
-    def dropEvent(self, event):
-        """Handle drop event."""
-        if self._type == "image" or self._type == "video":
-            if event.mimeData().hasUrls():
-                event.acceptProposedAction()
-                # Handle the dropped files
-                self.handle_drop_data(event.mimeData())
-        else:
-            event.ignore()
-
-    def handle_drop_data(self, mime_data):
-        """Handle dropped data.
-
-        Args:
-            mime_data: QMimeData containing the dropped data
-        """
-        if mime_data.hasUrls():
-            urls = mime_data.urls()
-            if urls:
-                # Get the first URL
-                url = urls[0]
-                # Convert to local file path
-                file_path = url.toLocalFile()
-                # Check if it's an image file or video respectively
-                if (
-                    self._type == "image"
-                    and file_path.lower().endswith(
-                        (".png", ".jpg", ".jpeg", ".bmp", ".webp")
-                    )
-                ) or (
-                    self._type == "video"
-                    and file_path.lower().endswith((".mp4", ".mov"))
-                ):
-                    # Set the value to the file path
-                    self._value = file_path
-                    # Update the filename label
-                    self._filename_label.setText(os.path.basename(file_path))
-                    # Load and display the thumbnail
-                    self._load_thumbnail(file_path)
 
 
 class WorkflowsWidget(QWidget):
@@ -932,6 +474,13 @@ class WorkflowsWidget(QWidget):
                                         options = options[0]
                                 node["options"] = options
 
+            # find the options for a swarm lora loader
+            elif node["class_type"] == "SwarmLoraLoader":
+                loras = self._comfy_server.get_loras_available()
+                node["options"] = loras
+                gui_nodes[id] = node
+                # print(loras)
+
         return gui_nodes
 
     def build_gui_from_nodes(self, gui_nodes):
@@ -1000,7 +549,7 @@ class WorkflowsWidget(QWidget):
         )
 
         for id, node in sorted_gui_nodes:
-            node_widget = NodeWidget(id, node)
+            node_widget = WorkflowNodeWidget(id, node)
             layout.addWidget(node_widget)
 
             # Add spacing between nodes
@@ -1054,7 +603,7 @@ class WorkflowsWidget(QWidget):
 
                     # Update the node widget with the value
                     if value is not None:
-                        self._set_node_widget_value(node_widget, value)
+                        node_widget.set_node_widget_value(value, self._output_root)
 
     def _import_settings_from_dropped_file(self, filename):
         """Import settings from a dropped file and update NodeWidgets.
@@ -1106,145 +655,8 @@ class WorkflowsWidget(QWidget):
                 inputs.get("title", ""), extracted_values
             )
             if value is not None:
-                self._set_node_widget_value(node_widget, value)
+                node_widget.set_node_widget_value(value, self._output_root)
 
-    def _set_node_widget_value(self, node_widget, value):
-        """Set the value of a NodeWidget based on its type.
-
-        Args:
-            node_widget: The NodeWidget to update
-            value: The value to set
-        """
-        if not hasattr(node_widget, "_type") or node_widget._type is None:
-            return
-
-        try:
-            if node_widget._type == "slider":
-                # For sliders, we need to find the slider widget and set its value
-                # This is a bit hacky but works with the current implementation
-                layout = node_widget.layout()
-                if layout:
-                    # Find the slider widget (it's the last widget in the layout)
-                    for i in range(layout.count()):
-                        item = layout.itemAt(i)
-                        if item and hasattr(item, "widget"):
-                            widget = item.widget()
-                            if isinstance(widget, QSlider):
-                                # Convert the value to the slider's range
-                                inputs = node_widget.node_data.get("inputs", {})
-                                min_val = float(inputs.get("min", 0))
-                                step = float(inputs.get("step", 1))
-                                max_val = float(inputs.get("view_max", 100))
-
-                                # Try to convert the value to a number
-                                try:
-                                    numeric_value = float(value)
-                                    # Clamp the value to the slider range
-                                    numeric_value = max(
-                                        min_val, min(numeric_value, max_val)
-                                    )
-                                    # Calculate slider position
-                                    slider_pos = int((numeric_value - min_val) / step)
-                                    widget.setValue(slider_pos)
-                                    # Update the display label
-                                    for j in range(layout.count()):
-                                        label_item = layout.itemAt(j)
-                                        if label_item and hasattr(label_item, "widget"):
-                                            label_widget = label_item.widget()
-                                            if (
-                                                isinstance(label_widget, QLabel)
-                                                and j > 0
-                                            ):  # Skip title label
-                                                label_widget.setText(
-                                                    str(round(numeric_value, 8))
-                                                )
-                                                break
-                                except (ValueError, TypeError):
-                                    pass
-                                break
-
-            elif node_widget._type == "seed":
-                # For seed inputs, find the QLineEdit widget
-                layout = node_widget.layout()
-                if layout:
-                    for i in range(layout.count()):
-                        item = layout.itemAt(i)
-                        if item and hasattr(item, "widget"):
-                            widget = item.widget()
-                            if isinstance(widget, QLineEdit):
-                                widget.setText(str(value))
-                                break
-
-            elif node_widget.node_data["class_type"] == "SwarmInputText":
-                # For text inputs (SwarmInputText), find the QTextEdit widget
-                layout = node_widget.layout()
-                if layout:
-                    for i in range(layout.count()):
-                        item = layout.itemAt(i)
-                        if item and hasattr(item, "widget"):
-                            widget = item.widget()
-                            if isinstance(widget, QTextEdit):
-                                widget.setPlainText(str(value))
-                                break
-
-            elif node_widget._type == "dropdown":
-                # For dropdown inputs, find the QComboBox widget
-                layout = node_widget.layout()
-                if layout:
-                    for i in range(layout.count()):
-                        item = layout.itemAt(i)
-                        if item and hasattr(item, "widget"):
-                            widget = item.widget()
-                            if isinstance(widget, QComboBox):
-                                # Find the text in the dropdown
-                                index = widget.findText(str(value))
-                                if index >= 0:
-                                    widget.setCurrentIndex(index)
-                                break
-
-            elif node_widget._type == "image" or node_widget._type == "video":
-                image_path = str(value)
-
-                # If the image path is not a full path, try to find it
-                if not os.path.isabs(image_path):
-                    # 1) Check current directory
-                    if os.path.exists(image_path):
-                        image_path = os.path.abspath(image_path)
-                    # 2) Check output_root
-                    elif hasattr(self, "_output_root") and len(self._output_root) > 0:
-                        output_path = os.path.join(self._output_root, image_path)
-                        if os.path.exists(output_path):
-                            image_path = output_path
-                        elif len(image_path) >= 8:
-                            # 3) Check output_root/<year>-<mount>-<day> from first 8 characters of the filename
-                            dir_name = (
-                                f"{image_path[:4]}-{image_path[4:6]}-{image_path[6:8]}"
-                            )
-                            output_subdir_path = os.path.join(
-                                self._output_root, dir_name, image_path
-                            )
-                            if os.path.exists(output_subdir_path):
-                                image_path = output_subdir_path
-
-                    # If still not found leave blank
-                    if not os.path.exists(image_path):
-                        return
-
-                # For image inputs, update the file path and thumbnail
-                value = image_path
-                node_widget._value = image_path
-                if hasattr(node_widget, "_filename_label"):
-                    node_widget._filename_label.setText(os.path.basename(image_path))
-                if hasattr(node_widget, "_load_thumbnail") and os.path.exists(
-                    image_path
-                ):
-                    node_widget._load_thumbnail(image_path)
-
-            # Update the internal value
-            node_widget._value = value
-
-        except Exception as e:
-            print(f"Error setting node widget value: {e}")
 
     def dragEnterEvent(self, event):
         """Handle drag enter event for the settings tab."""
@@ -1321,6 +733,10 @@ class WorkflowsWidget(QWidget):
                 workflow[id]["inputs"]["video"] = node_widget.get_value()
                 workflow[id]["input_width"] = node_widget.input_width
                 workflow[id]["input_height"] = node_widget.input_height
+            elif workflow[id]["class_type"] == "SwarmLoraLoader":
+                value = node_widget.get_value()
+                workflow[id]["inputs"]["lora_names"] = list(value.keys())
+                workflow[id]["inputs"]["lora_weights"] = list(value.values())
             else:
                 workflow[id]["inputs"]["value"] = node_widget.get_value()
         return workflow
