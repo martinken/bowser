@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
-    QListWidgetItem,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -184,7 +183,7 @@ class WorkflowNodeWidget(QWidget):
             text_edit.setSizePolicy(
                 QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
             )
-            text_edit.setFixedHeight(87)  # Start with a fixed height, 4 lines
+            text_edit.setFixedHeight(109)  # Start with a fixed height, 5 lines
 
             # Connect text changes to update self._value
             text_edit.textChanged.connect(
@@ -510,7 +509,7 @@ class WorkflowNodeWidget(QWidget):
                                         min_val, min(numeric_value, max_val)
                                     )
                                     # Calculate slider position
-                                    slider_pos = int((numeric_value - min_val) / step)
+                                    slider_pos = round((numeric_value - min_val) / step)
                                     widget.setValue(slider_pos)
                                     # Update the display label
                                     for j in range(layout.count()):

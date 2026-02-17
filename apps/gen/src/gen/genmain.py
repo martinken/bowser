@@ -430,7 +430,7 @@ class GenMain(QMainWindow):
     def open_workflows_directory(self, directory_path=None):
         """Prompt user to select a workflows directory or use provided path and update JobsWidget."""
         # If no directory path provided, open directory selection dialog
-        if directory_path is None:
+        if directory_path is None or directory_path is False:
             directory = QFileDialog.getExistingDirectory(
                 self,
                 "Select Workflows Directory",

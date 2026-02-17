@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QFileDialog,
+    QHBoxLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -195,6 +196,9 @@ class ViewMain(QMainWindow):
         # Connect thumbnail clicked signal
         self._image_gallery.thumbnail_clicked.connect(self._on_thumbnail_clicked)
 
+        # Connect status update signal
+        self._image_gallery.status_update.connect(self.set_status_message)
+
         # 3. Image Video Viewer (handles both image and video viewing)
         self._image_video_viewer = ImageVideoViewer()
 
@@ -222,11 +226,25 @@ class ViewMain(QMainWindow):
         self._main_splitter.setStretchFactor(2, 1)  # Viewer - gets extra space
         self._main_splitter.setStretchFactor(3, 0)  # metadata - no stretch
 
+        # Create status label
+        self._status_label = QLabel("Ready")
+        self._status_label.setStyleSheet("color: #CCCCCC; padding: 2px 8px;")
+
+        # Create horizontal layout for menu bar
+        menu_layout = QHBoxLayout()
+        menu_layout.setContentsMargins(0, 0, 0, 0)
+        menu_layout.addWidget(self.menuBar())
+        menu_layout.addStretch()
+        menu_layout.addWidget(self._status_label)
+
         # Create main vertical layout
         main_container = QWidget()
         main_layout = QVBoxLayout(main_container)
+        main_layout.addLayout(menu_layout)
         main_layout.addWidget(self._main_splitter)
+        main_layout.setStretchFactor(self._main_splitter, 1)  # Splitter takes all extra space
         main_container.setLayout(main_layout)
+
 
         self.setCentralWidget(main_container)
 
@@ -302,6 +320,14 @@ class ViewMain(QMainWindow):
         """Show the keybindings dialog."""
         dialog = KeybindingsDialog(self)
         dialog.exec()
+
+    def set_status_message(self, message: str):
+        """Update the status label with a message.
+        
+        Args:
+            message: The status message to display.
+        """
+        self._status_label.setText(message)
 
     def _set_compact_view(self):
         """Set the window and splitter to compact view dimensions."""
